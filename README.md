@@ -9,14 +9,64 @@
 
 ## 폴더 구조
 
+파일마다 담당자를 한 명씩 정했습니다. 다른 사람이 담당하는 파일을 고쳐야 할 때는 먼저 담당자에게 알립니다. 아직 없는 파일은 담당자가 작업을 시작할 때 만듭니다.
+
+### 기본 틀 (안진성)
+
 | 경로 | 내용 |
 |---|---|
-| `app.py` | Streamlit 앱 시작점 |
-| `pacs/config.py` | 팀이 합의한 값과 기준값 (역할, 상태, 긴급도, 기준값) |
-| `tests/` | pytest 자동화 테스트 |
+| `app.py` | 시작점, 로그인 확인, 역할별 메뉴 |
+| `pacs/config.py` | 팀이 합의한 값과 기준값. 바꿀 때는 팀에 알리고 PR로 반영 |
+| `pacs/auth.py` | 로그인, 로그아웃, 역할 확인 |
+| `pacs/cases.py` | 케이스와 영상의 등록·조회·검색 (권한 검사 포함) |
+| `pacs/workflow.py` | 상태 전이 표와 전이 실행, 변경 기록 |
+| `pacs/processing.py` | 알고리즘 실행과 처리 이력 저장 |
+| `pacs/viewer.py` | 뷰어 (확대·이동·초기화, 원본과 결과 비교, ROI 선택) |
+| `pages/register.py` | 케이스 등록 화면 |
+| `pages/case_detail.py` | 케이스 상세 화면 |
+| `firestore.rules` | Firestore 보안 규칙 |
+
+### 품질 자동 점검 (안진성)
+
+| 경로 | 내용 |
+|---|---|
+| `pacs/quality.py` | 품질 지표 계산과 판정 |
+| `pacs/algorithms/clahe.py` | CLAHE |
+
+### 블라인드 이중 검토와 ROI 불일치 감지 (고영민)
+
+| 경로 | 내용 |
+|---|---|
+| `pacs/reviews.py` | 검토 결과 읽기·쓰기, 블라인드 규칙, 제출, 중재 확정 |
+| `pacs/comparison.py` | 겹침 비율 계산과 일치·불일치 판정 |
+| `pacs/roi.py` | ROI 유효성 검사, 평균·분산·히스토그램 |
+| `pacs/algorithms/canny.py` | Canny |
+| `pages/review.py` | 검토 화면 |
+| `pages/arbitration.py` | 중재 화면 |
+
+### 검토 우선순위 (이시은)
+
+| 경로 | 내용 |
+|---|---|
+| `pacs/priority.py` | 기한 계산, 정렬, 기한 초과 판정 |
+| `pacs/algorithms/median.py` | Median 필터 |
+| `pages/worklist.py` | 작업 목록 화면 |
+
+### 공통
+
+| 경로 | 내용 |
+|---|---|
+| `tests/test_모듈이름.py` | pytest 자동화 테스트. 각 모듈의 담당자가 작성 |
 | `.streamlit/secrets.toml.example` | 비밀 값 양식 |
 | `.github/pull_request_template.md` | PR 양식 |
 | `CLAUDE.md` | 프로젝트 규칙 |
+
+### 서로 맞춰야 하는 부분
+
+- 알고리즘 3종은 같은 형태로 만듭니다. 영상과 설정값을 받아 결과 영상을 돌려주는 형태여야 뷰어에서 같은 방식으로 부를 수 있습니다.
+- 뷰어는 `pacs/viewer.py` 하나만 둡니다. 검토·중재·케이스 상세 화면은 이것을 불러 씁니다.
+- 작업 목록 화면은 `pacs/cases.py`의 케이스 목록 조회 함수를 씁니다. 함수 형태는 안진성과 이시은이 먼저 맞춥니다.
+- 품질 점검의 선명도 지표가 Canny를 쓸 경우 `pacs/algorithms/canny.py`를 불러 씁니다.
 
 ## 설치
 
