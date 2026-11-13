@@ -1,0 +1,14 @@
+# 비밀 값 (절대 커밋 금지)
+.streamlit/secrets.toml
+.env
+*serviceAccount*.json
+*firebase-adminsdk*.json
+
+# 파이썬
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 수업 자료 (저장소에 올리지 않음)
+Term_Project_안내문.pdf
