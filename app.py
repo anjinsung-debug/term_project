@@ -18,6 +18,10 @@ with st.sidebar:
     if st.button("로그아웃"):
         auth.logout()
         st.rerun()
+    st.caption(
+        "영상 출처: [NIH ChestX-ray14](https://nihcc.app.box.com/v/ChestXray-NIHCC), "
+        "NIH Clinical Center 제공 (Wang et al., CVPR 2017). 일부 영상은 품질 점검을 위해 가공했습니다."
+    )
 
 
 def home():
@@ -28,5 +32,6 @@ def home():
 menu = [st.Page(home, title="홈", default=True)]
 if user["role"] == "registrar":
     menu.append(st.Page("pages/register.py", title="케이스 등록"))
+menu.append(st.Page("pages/case_detail.py", title="케이스 상세"))
 
 st.navigation(menu).run()
