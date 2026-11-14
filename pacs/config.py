@@ -46,8 +46,25 @@ LABELS = {
 SUPPORTED_FORMATS = ("png", "jpeg")
 
 # --- 품질 자동 점검 (노션 6-1, 담당: 안진성) ---
-# 정상 원본 20~30장의 지표 분포를 측정한 뒤 채운다. 임의의 숫자를 넣지 않는다.
-QUALITY_THRESHOLDS = None
+# 기준 영상 20장(PA)의 지표 분포를 측정해 정했다 (2026-11-15, scripts/prepare_samples.py로 만든 영상).
+#   기준 영상: 밝기 최솟값 102.7, 대비 하위 10% 59.1, 잡음 최댓값 3.3, 선명도 최솟값 38.5
+#   가공본:   어둡게 57~59, 대비 낮게 10~22, 잡음 9.6~10.0, 흐리게 선명도 2.5~4.0
+# 기준 영상의 경계보다 충분히 바깥에 두어, 가공본은 모두 잡히고 정상 영상은 대부분 통과한다.
+# (kind, 비교, 값): "min"이면 값보다 작을 때, "max"이면 값보다 클 때 점검 필요
+QUALITY_THRESHOLDS = {
+    "brightness": ("min", 90.0),
+    "contrast": ("min", 40.0),
+    "noise": ("max", 5.0),
+    "sharpness": ("min", 20.0),
+}
+QUALITY_REASONS = {
+    "brightness": "너무 어둡습니다",
+    "contrast": "대비가 낮습니다 (뿌옇습니다)",
+    "noise": "잡음이 많습니다",
+    "sharpness": "흐립니다 (선명도가 낮습니다)",
+}
+# 미달 지표별 추천 보정 (CLAUDE.md: 버튼으로 제안만 하고 적용은 검토자가 결정)
+QUALITY_RECOMMEND = {"brightness": "clahe", "contrast": "clahe", "noise": "median"}
 
 # --- ROI 불일치 판정 (노션 6-2, 담당: 고영민) ---
 # 겹침 비율(IoU)이 이 값 이상이면 일치. 실제로 ROI를 그려 본 뒤 조정할 수 있다.
