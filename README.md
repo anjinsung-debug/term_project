@@ -17,7 +17,9 @@
 |---|---|
 | `app.py` | 시작점, 로그인 확인, 역할별 메뉴 |
 | `pacs/config.py` | 팀이 합의한 값과 기준값. 바꿀 때는 팀에 알리고 PR로 반영 |
-| `pacs/auth.py` | 로그인, 로그아웃, 역할 확인 |
+| `pacs/firebase_app.py` | Firebase 연결 (Firestore 클라이언트, 웹 API 키) |
+| `pacs/auth.py` | 로그인, 로그아웃, 역할 확인, 권한 검사(`require_role`) |
+| `scripts/create_user.py` | 테스트 계정 만들기와 역할 지정 |
 | `pacs/cases.py` | 케이스와 영상의 등록·조회·검색 (권한 검사 포함) |
 | `pacs/workflow.py` | 상태 전이 표와 전이 실행, 변경 기록 |
 | `pacs/processing.py` | 알고리즘 실행과 처리 이력 저장 |
@@ -124,6 +126,35 @@ pytest
 - 키 파일과 키 값을 메신저 공개 채널이나 노션에 올리지 않습니다.
 - 팀 전체가 같은 데이터베이스를 씁니다. 다른 사람이 만든 테스트 데이터를 지우지 않습니다.
 - Firestore 보안 규칙은 모든 직접 접근을 막아 둡니다. 앱은 서버에서 서비스 계정으로 접속하고, 권한은 데이터를 읽고 쓰는 함수 안에서 검사합니다.
+
+## 테스트 계정 만들기
+
+로그인하려면 Firebase Authentication 계정과 Firestore `users/{uid}`의 역할이 모두 있어야 합니다. 역할이 없는 계정은 로그인할 수 없습니다.
+
+```bash
+python scripts/create_user.py registrar@pacs.test registrar 등록담당
+```
+
+- 역할은 `registrar`(등록), `reviewer`(검토), `manager`(관리) 중 하나입니다.
+- 비밀번호는 실행 중에 입력합니다. 화면에 표시되지 않습니다.
+- 이미 있는 계정에 다시 실행하면 비밀번호는 그대로 두고 역할만 바꿉니다.
+- 계정 정보와 비밀번호는 저장소나 노션에 적지 않고 LMS 제출란에만 적습니다.
+
+시연에는 등록 1개, 검토 2개(검토자 A, B), 관리 1개, 모두 4개가 필요합니다.
+
+## 코드에서 권한 검사하기
+
+권한 검사는 화면에서 버튼을 숨기는 것만으로 끝내지 않고, 데이터를 읽고 쓰는 함수 맨 앞에서 합니다.
+
+```python
+from pacs.auth import require_role
+
+def assign_reviewers(user, case_id, reviewer_uids):
+    require_role(user, "manager")  # 관리 담당자가 아니면 PermissionError
+    ...
+```
+
+화면 파일은 맨 앞에서 `user = auth.require_login()`을 부릅니다. 로그인하지 않았으면 로그인 화면만 보여주고 멈춥니다.
 
 ## 영상 파일 저장
 
