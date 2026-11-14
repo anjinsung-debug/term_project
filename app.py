@@ -19,4 +19,14 @@ with st.sidebar:
         auth.logout()
         st.rerun()
 
-st.info("기본 틀을 준비하고 있습니다. 역할별 메뉴가 여기에 들어갑니다.")
+
+def home():
+    st.info("왼쪽 메뉴에서 작업을 선택해 주세요.")
+
+
+# 역할별 메뉴. 메뉴를 숨기는 것과 별개로, 각 화면과 데이터 함수가 다시 권한을 검사한다.
+menu = [st.Page(home, title="홈", default=True)]
+if user["role"] == "registrar":
+    menu.append(st.Page("pages/register.py", title="케이스 등록"))
+
+st.navigation(menu).run()
