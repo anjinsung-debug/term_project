@@ -24,6 +24,7 @@
 | `pacs/workflow.py` | 상태 전이 표와 전이 실행, 변경 기록 |
 | `pacs/processing.py` | 알고리즘 실행과 처리 이력 저장 |
 | `pacs/viewer.py` | 뷰어 (확대·이동·초기화, 원본과 결과 비교, ROI 선택) |
+| `pacs/algorithms/__init__.py` | 만들어진 알고리즘 모듈을 찾아 목록으로 돌려줌 (`algorithms.available()`) |
 | `pages/register.py` | 케이스 등록 화면 |
 | `pages/case_detail.py` | 케이스 상세 화면 |
 | `firestore.rules` | Firestore 보안 규칙 |
@@ -73,7 +74,14 @@
   - 모듈마다 `PARAMS`에 조절할 설정값의 범위를 적습니다. 뷰어가 이것을 보고 슬라이더를 만듭니다.
     예: `PARAMS = {"clip_limit": {"min": 1.0, "max": 10.0, "default": 2.0, "step": 0.5}}`
 - ROI는 원본 영상의 픽셀 좌표로 주고받습니다. 형태는 `{"x": 정수, "y": 정수, "w": 정수, "h": 정수}`이고, `x`, `y`는 왼쪽 위 모서리입니다. "ROI 없음"은 `None`입니다.
-- 뷰어는 `pacs/viewer.py` 하나만 둡니다. 검토·중재·케이스 상세 화면은 이것을 불러 씁니다. 뷰어는 사용자가 선택한 ROI를 위 형태로 돌려줍니다.
+- 뷰어는 `pacs/viewer.py` 하나만 둡니다. 검토·중재·케이스 상세 화면은 이것을 불러 씁니다.
+  - `viewer.to_gray(파일바이트)`: 흑백 `numpy.uint8` 배열로 바꾸기 (컬러도 흑백으로)
+  - `viewer.show(image, key, select_roi=True)`: 영상을 보여주고 사용자가 그린 ROI를 위 형태로 돌려줌. 그리지 않았으면 `None`
+  - `viewer.show(image, key, rois=[(roi, "검토자 A", "red"), (roi, "검토자 B", "blue")])`: 저장된 ROI를 겹쳐 그리기 (중재 화면용)
+  - `viewer.compare(original, processed, key)`: 원본과 처리 결과를 나란히. 확대·이동이 두 영상에 함께 적용
+  - `viewer.param_controls(module.PARAMS, key)`: `PARAMS`로 슬라이더를 만들고 고른 설정값을 돌려줌. `PARAMS` 항목에 `"label"`(한글 이름), `"help"`(설명)를 넣으면 화면에 보입니다
+  - 영상은 밝기 0~255로 고정해 그립니다. 원본 밝기가 그대로 보여야 처리 결과와 비교할 수 있기 때문입니다.
+- 알고리즘 모듈을 `pacs/algorithms/<이름>.py`로 만들면 `algorithms.available()`에 자동으로 들어오고, 케이스 상세 화면의 "처리 결과 비교"에 나타납니다.
 - 작업 목록 화면은 `pacs/cases.py`의 `list_cases(user, status=None, urgency=None, mock_id_query="")`를 씁니다. 역할에 맞는 케이스만 돌려주고(등록 담당: 본인 등록, 검토 담당: 본인 배정, 관리 담당: 전체), 각 항목은 Firestore 필드에 문서 ID `"id"`를 더한 딕셔너리입니다. 케이스 1건은 `get_case(user, case_id)`, 영상은 `load_image(user, image_id)`로 가져옵니다.
 - 화면을 새로 만들면 `app.py`의 역할별 메뉴(`menu`)에 추가합니다. 화면 파일 맨 앞에서는 `auth.require_login()`을 부르고, 역할이 맞지 않으면 안내 후 멈춥니다.
 - 시각은 UTC로 저장하고, 화면에는 `cases.format_kst(시각)`으로 한국 시간을 보여줍니다.
