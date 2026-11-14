@@ -3,9 +3,10 @@ import itertools
 from datetime import datetime, timezone
 
 import pytest
+from google.api_core.exceptions import AlreadyExists
 from PIL import Image
 
-from pacs import cases
+from pacs import cases, viewer
 
 REGISTRAR = {"uid": "reg1", "role": "registrar"}
 OTHER_REGISTRAR = {"uid": "reg2", "role": "registrar"}
@@ -34,6 +35,8 @@ class Ref:
         self.store, self.name, self.id = store, name, doc_id
 
     def get(self):
+        if self.store.get("_fail_get"):
+            raise RuntimeError("network down")
         return Snap(self.id, self.store[self.name].get(self.id))
 
 
@@ -53,6 +56,8 @@ class Query:
         return Query(self.store, self.name, self.filters, n)
 
     def stream(self):
+        if self.store.get("_hide_queries"):  # 동시 등록: 상대가 아직 저장하기 전에 확인한 상황
+            return []
         rows = [
             Snap(i, d) for i, d in self.store[self.name].items()
             if all(self.OPS[f.op_string](d.get(f.field_path), f.value) for f in self.filters)
@@ -72,19 +77,29 @@ class Batch:
         self.db, self.ops = db, []
 
     def set(self, ref, data):
-        self.ops.append((ref, data))
+        self.ops.append((ref, data, False))
+
+    def create(self, ref, data):
+        self.ops.append((ref, data, True))
 
     def commit(self):
         if self.db.fail_commit:
             raise RuntimeError("network down")
-        for ref, data in self.ops:
+        # Firestore처럼 create는 문서가 이미 있으면 묶음 전체가 실패한다
+        for ref, _, must_be_new in self.ops:
+            if must_be_new and ref.id in self.db.store[ref.name]:
+                raise AlreadyExists("document already exists")
+        for ref, data, _ in self.ops:
             self.db.store[ref.name][ref.id] = data
+        if self.db.lose_response:  # 저장은 됐는데 응답이 끊긴 상황
+            raise RuntimeError("deadline exceeded")
 
 
 class FakeDb:
     def __init__(self):
-        self.store = {"cases": {}, "images": {}, "case_events": {}, "_ids": itertools.count(1)}
+        self.store = {"cases": {}, "images": {}, "case_events": {}, "mock_ids": {}, "_ids": itertools.count(1)}
         self.fail_commit = False
+        self.lose_response = False
 
     def collection(self, name):
         return Collection(self.store, name)
@@ -170,6 +185,59 @@ def test_register_removes_file_when_record_fails(db):
         cases.register_case(REGISTRAR, "MOCK-1", "urgent", make_image())
     assert not list(db.tmp_path.rglob("*.png"))  # 파일만 남지 않는다
     assert db.store["cases"] == {}
+
+
+def test_register_keeps_file_when_saved_but_response_lost(db):
+    # 문제 1: Firestore에는 저장됐는데 응답이 끊기면, 파일을 지우지 않고 등록 성공으로 본다
+    db.lose_response = True
+    case_id = cases.register_case(REGISTRAR, "MOCK-1", "urgent", make_image())
+    image = db.store["images"][db.store["cases"][case_id]["target_image_id"]]
+    assert (db.tmp_path / image["storage_path"]).exists()
+
+
+def test_register_keeps_file_when_result_cannot_be_checked(db):
+    # 저장됐는지 확인조차 안 되면 파일을 남기고, 목록에서 확인하라고 안내한다
+    db.fail_commit = True
+    db.store["_fail_get"] = True
+    with pytest.raises(cases.CaseError, match="확인하지 못했습니다"):
+        cases.register_case(REGISTRAR, "MOCK-1", "urgent", make_image())
+    assert len(list(db.tmp_path.rglob("*.png"))) == 1
+
+
+def test_register_rejects_duplicate_registered_at_the_same_time(db):
+    # 문제 2: 두 사람이 동시에 확인해서 둘 다 "없음"을 본 경우에도 두 번째는 거절된다
+    cases.register_case(REGISTRAR, "MOCK-1", "urgent", make_image())
+    db.store["_hide_queries"] = True
+    with pytest.raises(cases.CaseError, match="이미 등록된"):
+        cases.register_case(REGISTRAR, "MOCK-1", "routine", make_image())
+    db.store["_hide_queries"] = False
+    assert len(db.store["cases"]) == 1
+    assert len(list(db.tmp_path.rglob("*.png"))) == 1  # 거절된 쪽 파일은 남지 않는다
+
+
+@pytest.mark.parametrize("bad_id", ["a/b", ".", "..", "__x__", "가" * 70])
+def test_register_rejects_mock_id_that_cannot_be_a_key(db, bad_id):
+    with pytest.raises(cases.CaseError, match="모의 케이스 ID"):
+        cases.register_case(REGISTRAR, bad_id, "urgent", make_image())
+
+
+def truncated_jpeg():
+    buf = io.BytesIO()
+    Image.effect_noise((512, 512), 60).save(buf, format="JPEG")
+    data = buf.getvalue()
+    return data[: int(len(data) * 0.6)]
+
+
+def test_validate_image_rejects_truncated_jpeg():
+    # 문제 3: 뒤가 잘린 JPEG는 verify()만으로는 통과해 버린다
+    with pytest.raises(cases.CaseError, match="읽을 수 없습니다"):
+        cases.validate_image(truncated_jpeg())
+
+
+def test_to_gray_explains_unreadable_file():
+    # 문제 3: 이미 저장된 손상 파일을 열어도 화면이 깨지지 않고 이유를 안내할 수 있어야 한다
+    with pytest.raises(ValueError, match="읽을 수 없습니다"):
+        viewer.to_gray(truncated_jpeg())
 
 
 # --- 조회 ---

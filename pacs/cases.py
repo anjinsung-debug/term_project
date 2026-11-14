@@ -6,10 +6,12 @@
 - 필드 이름은 노션 설계 문서 4-1을 따른다.
 """
 import io
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import streamlit as st
+from google.api_core.exceptions import AlreadyExists
 from google.cloud.firestore_v1.base_query import FieldFilter
 from PIL import Image, UnidentifiedImageError
 
@@ -18,6 +20,7 @@ from pacs.auth import require_role
 
 
 KST = timezone(timedelta(hours=9))
+MOCK_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,39}")
 
 
 class CaseError(Exception):
@@ -47,6 +50,8 @@ def validate_image(data):
             img.verify()  # 파일이 깨졌는지 확인
         with Image.open(io.BytesIO(data)) as img:  # verify 뒤에는 다시 열어야 크기를 읽을 수 있다
             fmt, (width, height) = (img.format or "").lower(), img.size
+            # verify()는 JPEG를 끝까지 풀어 보지 않아 뒤가 잘린 파일도 통과시킨다. 실제로 끝까지 풀어 본다.
+            img.load()
     except (UnidentifiedImageError, OSError, SyntaxError) as e:
         raise CaseError("영상 파일을 읽을 수 없습니다. 파일이 손상되었거나 영상이 아닙니다.") from e
     if fmt not in config.SUPPORTED_FORMATS:
@@ -64,15 +69,20 @@ def register_case(user, mock_id, urgency, image_data):
     mock_id = mock_id.strip()
     if not mock_id:
         raise CaseError("모의 케이스 ID를 입력해 주세요.")
+    # 모의 ID는 중복 방지용 문서 ID(mock_ids/{mock_id})로도 쓰므로 Firestore 문서 ID에 쓸 수 있는 글자만 받는다.
+    if not MOCK_ID_PATTERN.fullmatch(mock_id):
+        raise CaseError("모의 케이스 ID는 영문·숫자로 시작하고, 영문·숫자·-·_ 로 40자 이내여야 합니다.")
     if urgency not in config.URGENCIES:
         raise CaseError("긴급도를 선택해 주세요.")
     info = validate_image(image_data)
 
     db = firebase_app.db()
     cases = db.collection("cases")
-    # 같은 모의 ID가 있으면 거절한다. 등록 버튼을 두 번 눌러 같은 케이스가 두 번 생기는 것도 이것으로 막는다.
+    duplicate = CaseError(f"이미 등록된 모의 케이스 ID입니다: {mock_id}")
+    # 같은 모의 ID가 있으면 파일을 저장하기 전에 빨리 거절한다.
+    # 이 확인만으로는 동시에 등록하는 경우를 막지 못한다. 그건 아래 mock_ids 문서의 create가 막는다.
     if cases.where(filter=FieldFilter("mock_id", "==", mock_id)).limit(1).get():
-        raise CaseError(f"이미 등록된 모의 케이스 ID입니다: {mock_id}")
+        raise duplicate
 
     case_ref = cases.document()
     image_ref = db.collection("images").document()
@@ -88,8 +98,11 @@ def register_case(user, mock_id, urgency, image_data):
     except OSError as e:
         raise CaseError("영상 파일을 저장하지 못했습니다. 저장 폴더를 확인해 주세요.") from e
 
-    # 2) 케이스, 영상, 상태 기록을 한 번에 저장한다. 셋 중 하나만 저장되는 일은 없다.
+    # 2) 모의 ID 표시, 케이스, 영상, 상태 기록을 한 번에 저장한다. 넷 중 일부만 저장되는 일은 없다.
+    #    mock_ids/{mock_id}는 create로 만든다. 이미 있으면 묶음 전체가 실패하므로,
+    #    두 사람이 같은 ID로 동시에 등록해도 한 명만 성공한다.
     batch = db.batch()
+    batch.create(db.collection("mock_ids").document(mock_id), {"case_id": case_ref.id, "at": now})
     batch.set(case_ref, {
         "mock_id": mock_id,
         "exam_type": "chest_xray",
@@ -126,11 +139,35 @@ def register_case(user, mock_id, urgency, image_data):
     })
     try:
         batch.commit()
+    except AlreadyExists as e:
+        _remove_file(file_path)  # 저장되지 않은 것이 확실하다
+        raise duplicate from e
     except Exception as e:
-        # 3) 기록이 실패하면 방금 저장한 파일을 지워 파일만 남는 일을 막는다.
-        file_path.unlink(missing_ok=True)
-        raise CaseError("케이스를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.") from e
+        # 3) 오류가 나도 실제로는 저장되고 응답만 끊겼을 수 있다. 저장됐는지 확인한 뒤에만 파일을 지운다.
+        #    기록이 있는데 파일을 지우면 원본이 사라지기 때문이다.
+        try:
+            saved = case_ref.get().exists
+        except Exception:
+            saved = None
+        if saved:
+            return case_ref.id
+        if saved is False:
+            _remove_file(file_path)
+            raise CaseError("케이스를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.") from e
+        # 확인조차 안 되면 파일을 남긴다. 파일만 남는 쪽이 원본이 사라지는 쪽보다 덜 위험하다.
+        raise CaseError(
+            "저장 결과를 확인하지 못했습니다. 잠시 후 목록에서 등록됐는지 확인해 주세요. "
+            "등록되지 않았다면 다시 등록하면 됩니다."
+        ) from e
     return case_ref.id
+
+
+def _remove_file(path):
+    path.unlink(missing_ok=True)
+    try:
+        path.parent.rmdir()  # 이 케이스만의 빈 폴더도 정리한다
+    except OSError:
+        pass
 
 
 def list_cases(user, status=None, urgency=None, mock_id_query=""):
