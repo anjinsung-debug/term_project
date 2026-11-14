@@ -33,6 +33,7 @@
 | 경로 | 내용 |
 |---|---|
 | `pacs/quality.py` | 품질 지표 계산과 판정 |
+| `scripts/prepare_samples.py` | 시연·실험용 영상 고르기와 가공본 만들기 |
 | `pacs/algorithms/clahe.py` | CLAHE |
 
 ### 블라인드 이중 검토와 ROI 불일치 감지 (고영민)
@@ -166,7 +167,46 @@ def assign_reviewers(user, case_id, reviewer_uids):
 
 ## 시연 데이터 준비
 
-작성 예정입니다.
+시연과 알고리즘 실험에 쓸 흉부 X-ray 33장을 스크립트로 만듭니다. 같은 샘플 묶음이면 누가 실행해도 같은 파일이 나옵니다.
+
+1. Kaggle의 [Random Sample of NIH Chest X-ray Dataset](https://www.kaggle.com/datasets/nih-chest-xrays/sample)을 내려받아 압축을 풉니다 (약 2GB, Kaggle 로그인 필요). 압축을 푼 폴더에 `sample_labels.csv`와 `sample/images/`가 있어야 합니다.
+2. 프로젝트 폴더에서 실행합니다. 결과는 `data/samples/`에 저장되고 저장소에는 올라가지 않습니다.
+
+```bash
+python scripts/prepare_samples.py 압축을_푼_폴더
+```
+
+| 묶음 | 장수 | 고르는 기준 | 쓰는 곳 |
+|---|---|---|---|
+| A. 기준 영상 | 20 | PA 촬영, 1024×1024 흑백, 성별 × 나이대를 고르게, 환자당 1장 | 품질 기준값을 정하는 정상 품질 분포 |
+| B. AP 영상 | 5 | AP 후보 300장 중 대비가 가장 낮은 5장 | 실제로 품질이 낮은 영상 |
+| C. 가공본 | 8 | A에서 2장씩 어둡게·대비 낮게·잡음·흐림 | 답을 아는 영상으로 품질 점검 확인 |
+
+- 진단 결과(Finding Labels)는 고르는 데 쓰지 않습니다. 이 시스템은 진단을 하지 않습니다.
+- 고른 파일과 가공 방법은 `data/samples/manifest.csv`에 기록됩니다.
+
+### 품질 기준값
+
+`pacs/config.py`의 `QUALITY_THRESHOLDS`입니다. 기준 영상 20장의 지표 분포를 측정해 정했습니다.
+
+| 지표 | 점검 필요 조건 | 기준 영상 (A) | 가공본 (C) |
+|---|---|---|---|
+| 밝기 (평균) | 90 미만 | 최솟값 102.7 | 어둡게: 57~59 |
+| 대비 (표준편차) | 40 미만 | 하위 10% 59.1 | 대비 낮게: 10~22 |
+| 잡음 (Median 잔차 표준편차) | 5 초과 | 최댓값 3.3 | 잡음: 9.6~10.0 |
+| 선명도 (Laplacian 분산) | 20 미만 | 최솟값 38.5 | 흐리게: 2.5~4.0 |
+
+판정 결과: 가공본 8장과 AP 5장은 모두 점검 필요, 기준 영상은 20장 중 19장이 통과합니다. 남은 1장(`00028539_000.png`)은 눈으로 봐도 대비가 낮은 영상입니다.
+
+알려진 한계: 잡음이 많으면 선명도 값이 크게 올라갑니다(가공본 약 2,000). 선명도 지표가 잡음도 경계로 세기 때문입니다. 잡음은 잡음 지표로만 판정합니다. 너무 밝은 영상은 시험하지 않아 밝기 상한은 두지 않았습니다.
+
+### OpenCV로 파일을 읽을 때 주의
+
+Windows에서 `cv2.imread`와 `cv2.imwrite`는 한글이 든 경로("바탕 화면" 등)를 읽고 쓰지 못합니다. 오류 없이 `None`을 돌려줘서 알아채기 어렵습니다. 파일은 바이트로 읽어서 풀어 주세요.
+
+```python
+img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+```
 
 ## JCloud 배포와 복구
 
@@ -181,6 +221,7 @@ def assign_reviewers(user, case_id, reviewer_uids):
 
 ## 데이터 출처
 
-- NIH ChestX-ray14, NIH Clinical Center 제공: https://nihcc.app.box.com/v/ChestXray-NIHCC
+- NIH ChestX-ray14, NIH Clinical Center 제공: https://nihcc.app.box.com/v/ChestXray-NIHCC (이용 제한 없음, 출처 링크·논문 인용·제공자 표기)
+- 실제로 받은 곳: Kaggle "Random Sample of NIH Chest X-ray Dataset" (약 5,600장 샘플), 라이선스 CC0: Public Domain
 - Xiaosong Wang, Yifan Peng, Le Lu, Zhiyong Lu, Mohammadhadi Bagheri, Ronald Summers. "ChestX-ray8: Hospital-scale Chest X-ray Database and Benchmarks." IEEE CVPR, pp. 3462-3471, 2017.
 - 품질 미달 영상은 위 원본에 밝기 저하, 잡음, 흐림을 넣어 직접 가공한 것입니다.
