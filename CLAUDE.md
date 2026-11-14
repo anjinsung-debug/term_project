@@ -44,11 +44,13 @@
   - `reviews` 문서 ID는 `케이스ID_검토자UID`, `comparisons` 문서 ID는 케이스 ID로 정해 중복 기록을 막는다.
   - 상태 변경은 `case_events`에 남긴다.
 - 기준값(품질, 불일치 0.5, 목표 시간)은 코드 한 곳에 모아 바꿀 수 있게 한다.
-- 미정: 품질 기준값의 실제 숫자(영상 선별 후 측정), 완료 후 재검토 시 검토 기록을 구분하는 방법, 영상 파일 저장 위치(Firebase Storage 또는 JCloud).
+- 모듈 사이의 약속(알고리즘 `apply(image, **params) -> image`와 `PARAMS`, ROI `{"x","y","w","h"}`)은 README의 "서로 맞춰야 하는 부분"이 기준이다.
+- 미정: 품질 기준값의 실제 숫자(영상 선별 후 측정), 완료 후 재검토 시 검토 기록을 구분하는 방법.
 
 ## 1. 기술 스택 (변경 금지)
 - Python + Streamlit / 인증: Firebase Authentication / DB: Cloud Firestore / 배포: JCloud
-- 영상 파일은 Firebase Storage 또는 JCloud 영구 저장소에 둔다. 영상 파일 자체는 Firestore에 넣지 않는다.
+- 영상 파일은 JCloud 영구 저장소(로컬에서는 `data_dir` 폴더)에 둔다. Firebase Storage는 유료 요금제가 필요해 쓰지 않는다 (2026-11-13 결정). 영상 파일 자체는 Firestore에 넣지 않는다.
+- 뷰어와 ROI 선택은 Streamlit의 plotly 차트 박스 선택으로 구현한다 (2026-11-13 동작 확인). 외부 그리기 컴포넌트는 쓰지 않는다.
 - Firestore에는 케이스·영상 메타데이터(파일 위치 포함)·상태·메모·처리 이력·사용자 권한을 저장한다.
 - 앱 재시작·새로고침 후에도 원본·결과·기록이 다시 조회되어야 한다 (로컬 임시 파일·세션 상태에만 저장 금지).
 

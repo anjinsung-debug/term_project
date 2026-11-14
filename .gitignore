@@ -4,6 +4,9 @@
 *serviceAccount*.json
 *firebase-adminsdk*.json
 
+# 로컬에 저장되는 영상 파일
+data/
+
 # 파이썬
 .venv/
 __pycache__/
