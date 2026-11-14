@@ -42,8 +42,11 @@ LABELS = {
     "chest_xray": "흉부 X-ray",
 }
 
-# --- 업로드 (노션 1장) ---
+# --- 업로드 (노션 1장, 6-1) ---
 SUPPORTED_FORMATS = ("png", "jpeg")
+FILE_EXTENSIONS = {"png": "png", "jpeg": "jpg"}
+MIN_IMAGE_SIDE = 256  # 가로·세로가 이보다 작으면 "너무 작은 파일"로 거부
+MAX_UPLOAD_MB = 20
 
 # --- 품질 자동 점검 (노션 6-1, 담당: 안진성) ---
 # 정상 원본 20~30장의 지표 분포를 측정한 뒤 채운다. 임의의 숫자를 넣지 않는다.
