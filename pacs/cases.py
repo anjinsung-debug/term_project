@@ -27,9 +27,10 @@ class CaseError(Exception):
     """사용자에게 그대로 보여줄 수 있는 등록·조회 실패."""
 
 
-def format_kst(dt):
-    """저장은 UTC, 화면은 한국 시간으로 보여준다."""
-    return dt.astimezone(KST).strftime("%Y-%m-%d %H:%M") if dt else "-"
+def format_kst(dt, *, with_seconds=False):
+    """저장은 UTC, 화면은 한국 시간으로 보여준다. with_seconds=True이면 초까지 보여준다."""
+    fmt = "%Y-%m-%d %H:%M:%S" if with_seconds else "%Y-%m-%d %H:%M"
+    return dt.astimezone(KST).strftime(fmt) if dt else "-"
 
 
 def data_dir():

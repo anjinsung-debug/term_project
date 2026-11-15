@@ -289,3 +289,12 @@ def test_load_image_returns_none_bytes_when_file_missing(db):
 def test_format_kst():
     assert cases.format_kst(datetime(2026, 11, 14, 15, 0, tzinfo=timezone.utc)) == "2026-11-15 00:00"
     assert cases.format_kst(None) == "-"
+
+
+def test_format_kst_with_seconds_only_when_asked():
+    dt = datetime(2026, 11, 14, 15, 0, 7, tzinfo=timezone.utc)
+    assert cases.format_kst(dt) == "2026-11-15 00:00"  # 기존 호출은 그대로
+    assert cases.format_kst(dt, with_seconds=True) == "2026-11-15 00:00:07"
+    assert cases.format_kst(None, with_seconds=True) == "-"
+    with pytest.raises(TypeError):
+        cases.format_kst(dt, True)  # 이름을 붙여야만 쓸 수 있다
