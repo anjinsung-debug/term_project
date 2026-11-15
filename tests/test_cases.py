@@ -39,6 +39,9 @@ class Ref:
             raise RuntimeError("network down")
         return Snap(self.id, self.store[self.name].get(self.id))
 
+    def update(self, data):
+        apply_update(self.store[self.name][self.id], data)
+
 
 class Query:
     OPS = {
@@ -72,25 +75,41 @@ class Collection(Query):
         return Ref(self.store, self.name, doc_id or f"{self.name}-{next(self.store['_ids'])}")
 
 
+def apply_update(doc, data):
+    """Firestore update처럼 "flags.quality_check" 같은 점 경로로 묶음 필드 안을 바꾼다."""
+    for key, value in data.items():
+        *parents, last = key.split(".")
+        target = doc
+        for p in parents:
+            target = target.setdefault(p, {})
+        target[last] = value
+
+
 class Batch:
     def __init__(self, db):
         self.db, self.ops = db, []
 
     def set(self, ref, data):
-        self.ops.append((ref, data, False))
+        self.ops.append((ref, data, "set"))
 
     def create(self, ref, data):
-        self.ops.append((ref, data, True))
+        self.ops.append((ref, data, "create"))
+
+    def update(self, ref, data):
+        self.ops.append((ref, data, "update"))
 
     def commit(self):
         if self.db.fail_commit:
             raise RuntimeError("network down")
         # Firestore처럼 create는 문서가 이미 있으면 묶음 전체가 실패한다
-        for ref, _, must_be_new in self.ops:
-            if must_be_new and ref.id in self.db.store[ref.name]:
+        for ref, _, kind in self.ops:
+            if kind == "create" and ref.id in self.db.store[ref.name]:
                 raise AlreadyExists("document already exists")
-        for ref, data, _ in self.ops:
-            self.db.store[ref.name][ref.id] = data
+        for ref, data, kind in self.ops:
+            if kind == "update":
+                apply_update(self.db.store[ref.name][ref.id], data)
+            else:
+                self.db.store[ref.name][ref.id] = dict(data)
         if self.db.lose_response:  # 저장은 됐는데 응답이 끊긴 상황
             raise RuntimeError("deadline exceeded")
 
@@ -298,3 +317,89 @@ def test_format_kst_with_seconds_only_when_asked():
     assert cases.format_kst(None, with_seconds=True) == "-"
     with pytest.raises(TypeError):
         cases.format_kst(dt, True)  # 이름을 붙여야만 쓸 수 있다
+
+
+# --- 등록 시 품질 점검 (노션 6-1) ---
+
+def good_image():
+    from test_quality import chest_like  # 정상 품질 시험 영상
+
+    buf = io.BytesIO()
+    Image.fromarray(chest_like()).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def target(db, case_id):
+    return db.store["images"][db.store["cases"][case_id]["target_image_id"]]
+
+
+def test_register_saves_quality_result(db):
+    ok = cases.register_case(REGISTRAR, "MOCK-OK", "urgent", good_image())
+    assert target(db, ok)["quality"]["passed"] is True
+    assert db.store["cases"][ok]["flags"] == {"quality_check": False, "mismatch": False}
+
+    flat = cases.register_case(REGISTRAR, "MOCK-FLAT", "urgent", make_image())  # 회색 한 가지: 대비·선명도 미달
+    quality = target(db, flat)["quality"]
+    assert quality["passed"] is False and quality["reasons"]
+    assert {"brightness", "contrast", "noise", "sharpness", "recommend"} <= set(quality)
+    assert db.store["cases"][flat]["flags"]["quality_check"] is True  # 품질 미달이어도 등록은 된다
+
+
+def test_replace_image_keeps_old_original(db):
+    case_id = cases.register_case(REGISTRAR, "MOCK-1", "urgent", make_image())
+    old_id = db.store["cases"][case_id]["target_image_id"]
+    new_id = cases.replace_image(REGISTRAR, case_id, good_image())
+    assert new_id != old_id and db.store["cases"][case_id]["target_image_id"] == new_id
+    assert db.store["cases"][case_id]["flags"]["quality_check"] is False
+    # 이전 영상은 기록과 파일이 그대로 남는다
+    assert (db.tmp_path / db.store["images"][old_id]["storage_path"]).read_bytes() == make_image()
+    assert (db.tmp_path / db.store["images"][new_id]["storage_path"]).read_bytes() == good_image()
+
+
+def test_replace_image_rules(db):
+    case_id = cases.register_case(REGISTRAR, "MOCK-1", "urgent", make_image())
+    with pytest.raises(PermissionError):
+        cases.replace_image(MANAGER, case_id, good_image())
+    with pytest.raises(cases.CaseError, match="찾을 수 없습니다"):
+        cases.replace_image(OTHER_REGISTRAR, case_id, good_image())
+    with pytest.raises(cases.CaseError, match="읽을 수 없습니다"):
+        cases.replace_image(REGISTRAR, case_id, b"not an image")
+    db.store["cases"][case_id]["status"] = "revision_requested"  # 보완 요청에서도 다시 올릴 수 있다
+    cases.replace_image(REGISTRAR, case_id, good_image())
+    db.store["cases"][case_id]["status"] = "in_review"
+    with pytest.raises(cases.CaseError, match="접수 또는 보완 요청"):
+        cases.replace_image(REGISTRAR, case_id, good_image())
+
+
+def test_replace_image_removes_new_file_when_record_fails(db):
+    case_id = cases.register_case(REGISTRAR, "MOCK-1", "urgent", make_image())
+    before = db.store["cases"][case_id]["target_image_id"]
+    db.fail_commit = True
+    with pytest.raises(cases.CaseError, match="저장하지 못했습니다"):
+        cases.replace_image(REGISTRAR, case_id, good_image())
+    assert db.store["cases"][case_id]["target_image_id"] == before
+    assert len(list(db.tmp_path.rglob("*.png"))) == 1  # 새 파일만 지워지고 원래 원본은 남는다
+
+
+def test_set_proceed_reason(db):
+    case_id = cases.register_case(REGISTRAR, "MOCK-1", "urgent", make_image())
+    for reason in (None, "", "   "):
+        with pytest.raises(cases.CaseError, match="사유를 입력"):
+            cases.set_proceed_reason(REGISTRAR, case_id, reason)
+    cases.set_proceed_reason(REGISTRAR, case_id, "  재촬영 불가, 현재 영상으로 검토 요청  ")
+    assert target(db, case_id)["proceed_reason"] == "재촬영 불가, 현재 영상으로 검토 요청"
+    assert db.store["cases"][case_id]["flags"]["quality_check"] is True  # 표시는 남긴다
+    with pytest.raises(cases.CaseError):
+        cases.set_proceed_reason(OTHER_REGISTRAR, case_id, "사유")
+
+
+def test_set_proceed_reason_not_needed_when_passed(db):
+    case_id = cases.register_case(REGISTRAR, "MOCK-1", "urgent", good_image())
+    with pytest.raises(cases.CaseError, match="통과한 영상"):
+        cases.set_proceed_reason(REGISTRAR, case_id, "사유")
+
+
+def test_get_image_has_no_bytes(db):
+    case_id = cases.register_case(REGISTRAR, "MOCK-1", "urgent", make_image())
+    image = cases.get_image(REGISTRAR, db.store["cases"][case_id]["target_image_id"])
+    assert "bytes" not in image and image["case_id"] == case_id

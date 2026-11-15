@@ -34,6 +34,15 @@ st.caption(
     f"{config.LABELS[case['exam_type']]} · {image['format'].upper()} · "
     f"{image['width']}×{image['height']} · 모의 케이스"
 )
+quality = image.get("quality")
+if quality and not quality["passed"]:
+    st.warning(
+        "품질 자동 점검: 점검 필요 · " + " / ".join(quality["reasons"])
+        + (f" · 그대로 진행한 사유: {image['proceed_reason']}" if image.get("proceed_reason") else "")
+        + " (교육용 결과)"
+    )
+elif quality:
+    st.caption("품질 자동 점검: 통과 (교육용 결과)")
 
 if image["bytes"] is None:
     st.warning(

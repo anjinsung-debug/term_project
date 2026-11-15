@@ -40,7 +40,7 @@
   - 정렬 대상은 완료되지 않은 케이스다. 완료된 케이스는 별도 목록에 완료 시각(`completed_at`) 순으로 보여준다.
   - 기한(`due_at`)은 Firestore에 저장하지 않고 정렬할 때 `registered_at`과 `urgency`로 계산한다 (2026-11-15 이시은 결정, PR #8 댓글). 목표 시간을 바꿔도 기존 케이스에 바로 반영된다.
   - 상태가 완료(`done`)로 바뀌면 `completed_at`에 그 시각을 저장한다 (`pacs/workflow.py`, 아직 미구현).
-  - 품질 점검이 "점검 필요"이면 `cases.flags.quality_check`를 `True`로 저장한다. 작업 목록은 이 값으로 표시한다 (등록과 품질 판정 연결 시 구현).
+  - 품질 점검이 "점검 필요"이면 `cases.flags.quality_check`를 `True`로 저장한다. 작업 목록은 이 값으로 표시한다 (`pacs/cases.py`의 등록·다시 올리기에서 저장).
 - Firestore 필드 이름 (2026-11-13 확정): 노션 설계 문서 4-1이 기준이다. 코드에서 컬렉션·필드·정해진 값을 쓸 때 4-1의 이름을 그대로 쓰고, 새 필드가 필요하면 노션을 먼저 고친다.
   - 필드 이름은 영어 소문자와 밑줄, 시각은 UTC 타임스탬프, 상태·역할 값은 정해진 영어 단어만 쓴다.
   - 검토 메모는 `reviews.memo`에 둔다 (블라인드 규칙을 `reviews` 문서 하나에만 적용하기 위함).
@@ -48,7 +48,7 @@
   - 상태 변경은 `case_events`에 남긴다.
 - 기준값(품질, 불일치 0.5, 목표 시간)은 코드 한 곳에 모아 바꿀 수 있게 한다.
 - 모듈 사이의 약속(알고리즘 `apply(image, **params) -> image`와 `PARAMS`, ROI `{"x","y","w","h"}`)은 README의 "서로 맞춰야 하는 부분"이 기준이다.
-- 미정: 품질 기준값의 실제 숫자(영상 선별 후 측정), 완료 후 재검토 시 검토 기록을 구분하는 방법.
+- 미정: 완료 후 재검토 시 검토 기록을 구분하는 방법. (품질 기준값은 2026-11-15 확정, `config.QUALITY_THRESHOLDS`)
 
 ## 1. 기술 스택 (변경 금지)
 - Python + Streamlit / 인증: Firebase Authentication / DB: Cloud Firestore / 배포: JCloud
