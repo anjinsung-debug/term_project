@@ -42,7 +42,11 @@ if image["bytes"] is None:
     )
     st.stop()
 
-gray = viewer.to_gray(image["bytes"])
+try:
+    gray = viewer.to_gray(image["bytes"])
+except ValueError as e:
+    st.error(f"{e} 등록 담당자에게 다시 올려 달라고 요청해 주세요.")
+    st.stop()
 view_tab, compare_tab = st.tabs(["영상 보기 · ROI 선택", "처리 결과 비교"])
 
 with view_tab:

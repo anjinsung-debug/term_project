@@ -21,7 +21,7 @@ with st.form("register", clear_on_submit=True):
     mock_id = st.text_input(
         "모의 케이스 ID",
         value=f"MOCK-{datetime.now(cases.KST):%Y%m%d-%H%M%S}",
-        help="다른 케이스와 겹치지 않아야 합니다.",
+        help="다른 케이스와 겹치지 않아야 합니다. 영문·숫자로 시작하고 영문·숫자·-·_ 로 40자 이내.",
     )
     urgency = st.selectbox(
         "긴급도",

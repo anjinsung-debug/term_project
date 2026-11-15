@@ -11,7 +11,7 @@ import math
 import numpy as np
 import plotly.express as px
 import streamlit as st
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 # 도구 모음: 확대(zoom), 이동(pan), 확대·축소 버튼, 초기화(reset)만 남긴다.
 _CHART_CONFIG = {
@@ -23,9 +23,15 @@ _SELECT_CONFIG = {**_CHART_CONFIG, "modeBarButtonsToAdd": ["select2d"]}
 
 
 def to_gray(data):
-    """파일 바이트를 흑백 2차원 uint8 배열로 바꾼다. 컬러 영상도 흑백으로 바꿔 다룬다."""
-    with Image.open(io.BytesIO(data)) as img:
-        return np.asarray(img.convert("L"), dtype=np.uint8)
+    """파일 바이트를 흑백 2차원 uint8 배열로 바꾼다. 컬러 영상도 흑백으로 바꿔 다룬다.
+
+    파일이 손상되어 풀 수 없으면 이유를 담은 ValueError를 낸다. 화면은 이것을 안내로 보여준다.
+    """
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            return np.asarray(img.convert("L"), dtype=np.uint8)
+    except (UnidentifiedImageError, OSError, SyntaxError) as e:
+        raise ValueError("영상 파일을 읽을 수 없습니다. 파일이 손상되었을 수 있습니다.") from e
 
 
 def _layout(fig, height):
