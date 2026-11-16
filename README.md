@@ -85,6 +85,12 @@
   - `viewer.param_controls(module.PARAMS, key)`: `PARAMS`로 슬라이더를 만들고 고른 설정값을 돌려줌. `PARAMS` 항목에 `"label"`(한글 이름), `"help"`(설명)를 넣으면 화면에 보입니다
   - 영상은 밝기 0~255로 고정해 그립니다. 원본 밝기가 그대로 보여야 처리 결과와 비교할 수 있기 때문입니다.
 - 알고리즘 모듈을 `pacs/algorithms/<이름>.py`로 만들면 `algorithms.available()`에 자동으로 들어오고, 케이스 상세 화면의 "처리 결과 비교"에 나타납니다.
+- 처리 결과 저장은 `pacs/processing.py`를 씁니다.
+  - `processing.run(알고리즘, image, params)`: 저장하지 않고 결과만 돌려줍니다 (미리 보기). 잘못된 설정은 `ProcessingError`.
+  - `processing.save(user, case_id, 알고리즘, params, roi=None)`: 결과 파일(`results/{영상ID}/{처리이력ID}.png`)과 `processing_logs` 기록을 저장하고 `(처리이력ID, 새로 만들었는지)`를 돌려줍니다. 본인에게 배정된 "검토 중" 케이스에서 검토 담당자만 할 수 있습니다.
+  - 같은 사람이 같은 설정·ROI로 다시 저장하면 기록을 새로 만들지 않고 기존 ID를 돌려줍니다. 검토 제출 때 `reviews.processing_log_ids`에 이 ID를 넣으면 됩니다.
+  - `processing.list_logs(user, case_id)`, `processing.load_result(user, log_id)`: 검토 담당자는 본인 기록만 받습니다. 처리 이력에 ROI가 있어 블라인드 규칙을 지키기 위해서입니다.
+  - `processing.features(original, result, roi)`: 전체 품질 지표 전후와 ROI 통계(평균·분산·히스토그램) 전후. 저장되는 `features`와 같은 형태입니다.
 - 작업 목록 화면은 `pacs/cases.py`의 `list_cases(user, status=None, urgency=None, mock_id_query="")`를 씁니다. 역할에 맞는 케이스만 돌려주고(등록 담당: 본인 등록, 검토 담당: 본인 배정, 관리 담당: 전체), 각 항목은 Firestore 필드에 문서 ID `"id"`를 더한 딕셔너리입니다. 케이스 1건은 `get_case(user, case_id)`, 영상은 `load_image(user, image_id)`로 가져옵니다.
 - 케이스 상태는 `pacs/workflow.py`로만 바꿉니다. `cases` 문서의 `status`를 직접 고치지 않습니다.
   - `workflow.transition(user, case_id, 동작, reason=None, reviewer_uids=None)`: 전이 하나를 실행하고 새 상태를 돌려줍니다. 역할, 담당 범위, 현재 상태, 사유를 검사하고 `case_events` 기록과 `completed_at`을 함께 저장합니다.
@@ -186,6 +192,8 @@ def assign_reviewers(user, case_id, reviewer_uids):
   - 기록 저장에서 오류가 나면 **실제로 저장됐는지 확인한 뒤** 저장되지 않았을 때만 파일을 지웁니다. 응답만 끊기고 저장은 된 경우 원본을 지우지 않기 위해서입니다. 확인조차 안 되면 파일을 남기고 목록에서 확인하라고 안내합니다.
   - 같은 모의 ID는 `mock_ids/{모의ID}` 문서를 `create`로 만들어 막습니다. 문서가 이미 있으면 저장 전체가 실패하므로, 두 사람이 동시에 등록해도 한 명만 성공합니다. 그래서 모의 ID는 문서 ID에 쓸 수 있게 영문·숫자로 시작하고 영문·숫자·`-`·`_`로 40자 이내여야 합니다.
   - 영상 파일은 등록할 때 끝까지 풀어 봅니다. 뒤가 잘린 JPEG처럼 손상된 파일은 등록 단계에서 거부합니다. 이미 저장된 파일이 손상돼 있으면 상세 화면은 오류 대신 안내를 보여줍니다.
+- 처리 결과는 `results/{영상ID}/{처리이력ID}.png`에 PNG로 저장합니다. 원본은 고치지 않습니다.
+  - 결과 파일을 먼저 저장하고 기록을 저장합니다. 파일 저장이 실패하면 `status: "failed"`로 기록을 남기고, 기록 저장이 실패하면 저장되지 않은 것을 확인한 뒤에만 결과 파일을 지웁니다.
 - 받는 파일: PNG 또는 JPEG, 가로·세로 256픽셀 이상, 20MB 이하. 손상된 파일과 다른 형식은 이유와 함께 거부합니다.
 - 배포 서버(JCloud)에서는 서버를 다시 시작해도 지워지지 않는 폴더를 지정합니다.
 - 개발 중에는 각자 컴퓨터에 파일이 따로 저장됩니다. 다른 사람이 등록한 케이스는 기록만 있고 영상 파일이 없을 수 있습니다. 이 경우 화면에 오류 대신 안내 문구를 보여줍니다.
