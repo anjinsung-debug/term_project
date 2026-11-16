@@ -17,8 +17,8 @@ MANAGER = {"uid": "man1", "role": "manager"}
 # --- Firestore를 흉내 내는 최소한의 가짜 객체 ---
 
 class Snap:
-    def __init__(self, data):
-        self._data, self.exists = data, data is not None
+    def __init__(self, data, doc_id=None):
+        self._data, self.exists, self.id = data, data is not None, doc_id
 
     def to_dict(self):
         return dict(self._data) if self._data is not None else None
@@ -29,12 +29,22 @@ class Ref:
         self.store, self.name, self.id = store, name, doc_id
 
     def get(self, transaction=None):
-        return Snap(self.store[self.name].get(self.id))
+        return Snap(self.store[self.name].get(self.id), self.id)
 
 
 class Collection:
-    def __init__(self, store, name):
-        self.store, self.name = store, name
+    def __init__(self, store, name, filters=()):
+        self.store, self.name, self.filters = store, name, filters
+
+    def where(self, filter):
+        return Collection(self.store, self.name, self.filters + (filter,))
+
+    def stream(self):
+        return [
+            type("Doc", (), {"id": i, "to_dict": lambda self, d=d: dict(d)})()
+            for i, d in self.store[self.name].items()
+            if all(d.get(f.field_path) == f.value for f in self.filters)
+        ]
 
     def document(self, doc_id=None):
         return Ref(self.store, self.name, doc_id or f"{self.name}-{next(self.store['_ids'])}")
@@ -72,8 +82,8 @@ class FakeDb:
         self.store = {
             "cases": {}, "case_events": {}, "_ids": itertools.count(1),
             "users": {
-                "revA": {"role": "reviewer"}, "revB": {"role": "reviewer"},
-                "revC": {"role": "reviewer"}, "man1": {"role": "manager"},
+                "revA": {"role": "reviewer", "display_name": "검토자 A"}, "revB": {"role": "reviewer", "email": "b@pacs.test"},
+                "revC": {"role": "reviewer", "display_name": "검토자 C"}, "man1": {"role": "manager", "display_name": "관리자"},
             },
         }
 
@@ -256,3 +266,29 @@ def test_plan_uses_given_time():
     updates, event = workflow.plan(MANAGER, c, "arbitrate", now=now)
     assert updates == {"status": "done", "updated_at": now, "completed_at": now}
     assert event["at"] == now and event["reason"] is None
+
+
+# --- 화면용 조회 ---
+
+def test_list_events_in_order_and_only_for_viewers(db):
+    run(db, MANAGER, "assign", reviewer_uids=["revA", "revB"])
+    run(db, REV_A, "start_review")
+    rows = workflow.list_events(REGISTRAR, "c1")
+    assert [r["action"] for r in rows] == ["assign", "start_review"]
+    with pytest.raises(CaseError):
+        workflow.list_events(OTHER_REGISTRAR, "c1")
+    with pytest.raises(CaseError):
+        workflow.list_events(REV_OTHER, "c1")
+
+
+def test_reviewer_accounts_only_for_manager(db):
+    assert [r["uid"] for r in workflow.reviewer_accounts(MANAGER)] == ["revB", "revA", "revC"]  # 이름 순
+    with pytest.raises(PermissionError):
+        workflow.reviewer_accounts(REV_A)
+
+
+def test_display_names(db):
+    names = workflow.display_names(REGISTRAR, ["revA", "revB", "system", "ghost", None])
+    assert names == {"revA": "검토자 A", "revB": "b@pacs.test", "system": "시스템", "ghost": "ghost"}
+    with pytest.raises(PermissionError):
+        workflow.display_names(None, ["revA"])

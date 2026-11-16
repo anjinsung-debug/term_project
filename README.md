@@ -99,6 +99,8 @@
   - 다른 기록과 한 번에 저장해야 하면(예: 중재 의견과 `arbitrate`) 직접 만든 Firestore 트랜잭션 안에서 `workflow.apply(transaction, user, case_id, 동작, ...)`를 부릅니다. 읽기를 모두 끝낸 뒤에 부릅니다.
   - 실패하면 `TransitionError`, `PermissionError`, `CaseError`를 냅니다. 메시지를 화면에 그대로 보여주면 됩니다.
   - 버튼을 고를 때는 `workflow.allowed_actions(user, case)`를 씁니다.
+  - 케이스 상세 화면의 "업무 진행"에 배정·검토 시작·보완 요청·보완 완료·재검토 버튼이 있습니다. 중재 확정(`arbitrate`)은 의견과 함께 저장해야 해서 중재 화면에서 합니다.
+  - `workflow.list_events(user, case_id)`: 상태 변경 기록(오래된 순). `workflow.reviewer_accounts(user)`: 배정할 검토 담당자 목록(관리 담당자만). `workflow.display_names(user, uids)`: UID를 화면 이름으로.
 - 화면을 새로 만들면 `app.py`의 역할별 메뉴(`menu`)에 추가합니다. 화면 파일 맨 앞에서는 `auth.require_login()`을 부르고, 역할이 맞지 않으면 안내 후 멈춥니다.
 - 시각은 UTC로 저장하고, 화면에는 `cases.format_kst(시각)`으로 한국 시간을 보여줍니다.
 - 품질 점검의 선명도 지표가 Canny를 쓸 경우 `pacs/algorithms/canny.py`를 불러 씁니다.
