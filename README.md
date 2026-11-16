@@ -86,6 +86,13 @@
   - 영상은 밝기 0~255로 고정해 그립니다. 원본 밝기가 그대로 보여야 처리 결과와 비교할 수 있기 때문입니다.
 - 알고리즘 모듈을 `pacs/algorithms/<이름>.py`로 만들면 `algorithms.available()`에 자동으로 들어오고, 케이스 상세 화면의 "처리 결과 비교"에 나타납니다.
 - 작업 목록 화면은 `pacs/cases.py`의 `list_cases(user, status=None, urgency=None, mock_id_query="")`를 씁니다. 역할에 맞는 케이스만 돌려주고(등록 담당: 본인 등록, 검토 담당: 본인 배정, 관리 담당: 전체), 각 항목은 Firestore 필드에 문서 ID `"id"`를 더한 딕셔너리입니다. 케이스 1건은 `get_case(user, case_id)`, 영상은 `load_image(user, image_id)`로 가져옵니다.
+- 케이스 상태는 `pacs/workflow.py`로만 바꿉니다. `cases` 문서의 `status`를 직접 고치지 않습니다.
+  - `workflow.transition(user, case_id, 동작, reason=None, reviewer_uids=None)`: 전이 하나를 실행하고 새 상태를 돌려줍니다. 역할, 담당 범위, 현재 상태, 사유를 검사하고 `case_events` 기록과 `completed_at`을 함께 저장합니다.
+  - 동작 이름은 `workflow.TRANSITIONS`에 있습니다 (`assign`, `start_review`, `auto_match`, `auto_mismatch`, `arbitrate`, `request_revision`, `revision_done`, `reopen`). 화면 이름은 `config.LABELS`입니다.
+  - 두 검토 제출 후 자동 판정(`auto_match`, `auto_mismatch`)은 사용자 대신 `workflow.SYSTEM`을 넘깁니다.
+  - 다른 기록과 한 번에 저장해야 하면(예: 중재 의견과 `arbitrate`) 직접 만든 Firestore 트랜잭션 안에서 `workflow.apply(transaction, user, case_id, 동작, ...)`를 부릅니다. 읽기를 모두 끝낸 뒤에 부릅니다.
+  - 실패하면 `TransitionError`, `PermissionError`, `CaseError`를 냅니다. 메시지를 화면에 그대로 보여주면 됩니다.
+  - 버튼을 고를 때는 `workflow.allowed_actions(user, case)`를 씁니다.
 - 화면을 새로 만들면 `app.py`의 역할별 메뉴(`menu`)에 추가합니다. 화면 파일 맨 앞에서는 `auth.require_login()`을 부르고, 역할이 맞지 않으면 안내 후 멈춥니다.
 - 시각은 UTC로 저장하고, 화면에는 `cases.format_kst(시각)`으로 한국 시간을 보여줍니다.
 - 품질 점검의 선명도 지표가 Canny를 쓸 경우 `pacs/algorithms/canny.py`를 불러 씁니다.

@@ -40,6 +40,17 @@ LABELS = {
     "match": "일치",
     "mismatch": "불일치",
     "chest_xray": "흉부 X-ray",
+    # 상태 전이 동작 (pacs/workflow.py의 TRANSITIONS, case_events.action에 저장)
+    "register": "등록",
+    "assign": "배정",
+    "start_review": "검토 시작",
+    "auto_match": "자동 판정(일치)",
+    "auto_mismatch": "자동 판정(불일치)",
+    "arbitrate": "중재 확정",
+    "request_revision": "보완 요청",
+    "revision_done": "보완 완료",
+    "reopen": "재검토",
+    "system": "시스템",
 }
 
 # --- 업로드 (노션 1장, 6-1) ---
