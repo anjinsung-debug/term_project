@@ -39,11 +39,58 @@ if submitted:
         st.error("영상 파일을 올려 주세요.")
     else:
         try:
-            cases.register_case(user, mock_id, urgency, upload.getvalue())
+            case_id = cases.register_case(user, mock_id, urgency, upload.getvalue())
         except cases.CaseError as e:
             st.error(str(e))
         else:
             st.success(f"{mock_id.strip()} 케이스를 등록했습니다.")
+            quality = cases.get_image(user, cases.get_case(user, case_id)["target_image_id"])["quality"]
+            if quality["passed"]:
+                st.info("품질 자동 점검: 통과")
+            else:
+                st.warning("품질 자동 점검: 점검 필요 · " + " / ".join(quality["reasons"]) + ". 아래에서 처리해 주세요.")
+
+
+def quality_metrics(q):
+    return f"밝기 {q['brightness']} · 대비 {q['contrast']} · 잡음 {q['noise']} · 선명도 {q['sharpness']} (교육용 결과)"
+
+
+# 품질 "점검 필요"인데 아직 다시 올리지도, 사유를 남기지도 않은 케이스 (노션 6-1)
+pending = []
+for r in cases.list_cases(user):
+    if r["status"] in cases.REGISTRAR_EDIT_STATUSES and r.get("flags", {}).get("quality_check"):
+        image = cases.get_image(user, r["target_image_id"])
+        if not image.get("proceed_reason"):
+            pending.append((r, image))
+
+if pending:
+    st.divider()
+    st.subheader(f"품질 점검이 필요한 케이스 ({len(pending)})")
+    st.caption("영상을 다시 올리거나, 다시 올릴 수 없으면 사유를 입력하고 그대로 진행해 주세요. 자동으로 보정하지 않습니다.")
+    for r, image in pending:
+        with st.expander(f"{r['mock_id']} · {config.LABELS[r['urgency']]} · " + " / ".join(image["quality"]["reasons"])):
+            st.caption(quality_metrics(image["quality"]))
+            again, proceed = st.columns(2)
+            with again.form(f"replace_{r['id']}", clear_on_submit=True):
+                new_upload = st.file_uploader("다시 올리기", type=["png", "jpg", "jpeg"])
+                if st.form_submit_button("이 영상으로 바꾸기"):
+                    try:
+                        if new_upload is None:
+                            raise cases.CaseError("영상 파일을 올려 주세요.")
+                        cases.replace_image(user, r["id"], new_upload.getvalue())
+                    except cases.CaseError as e:
+                        st.error(str(e))
+                    else:
+                        st.rerun()  # 새 영상의 점검 결과로 목록을 다시 그린다
+            with proceed.form(f"proceed_{r['id']}"):
+                reason = st.text_area("그대로 진행하는 사유", placeholder="예: 재촬영이 어려워 현재 영상으로 검토 요청")
+                if st.form_submit_button("사유 저장하고 진행"):
+                    try:
+                        cases.set_proceed_reason(user, r["id"], reason)
+                    except cases.CaseError as e:
+                        st.error(str(e))
+                    else:
+                        st.rerun()
 
 st.divider()
 st.subheader("내가 등록한 케이스")
@@ -65,6 +112,7 @@ else:
                 "모의 ID": r["mock_id"],
                 "긴급도": config.LABELS[r["urgency"]],
                 "상태": config.LABELS[r["status"]],
+                "품질": "점검 필요" if r.get("flags", {}).get("quality_check") else "통과",
                 "등록 시각": cases.format_kst(r.get("registered_at")),
             }
             for r in rows

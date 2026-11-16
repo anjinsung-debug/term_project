@@ -4,6 +4,8 @@
 - 영상 파일은 data_dir 폴더에, 파일 위치와 정보는 Firestore에 저장한다 (README "영상 파일 저장").
 - 파일 저장과 Firestore 기록이 어긋나지 않게, 기록이 실패하면 방금 저장한 파일을 지운다.
 - 필드 이름은 노션 설계 문서 4-1을 따른다.
+- 영상을 올릴 때마다 품질 자동 점검(pacs/quality.py)을 하고 images.quality, cases.flags.quality_check에 저장한다.
+  품질 미달이어도 등록은 된다. 등록 담당자가 다시 올리거나(replace_image) 사유를 남기고 진행한다(set_proceed_reason).
 """
 import io
 import re
@@ -15,7 +17,7 @@ from google.api_core.exceptions import AlreadyExists
 from google.cloud.firestore_v1.base_query import FieldFilter
 from PIL import Image, UnidentifiedImageError
 
-from pacs import config, firebase_app
+from pacs import config, firebase_app, quality, viewer
 from pacs.auth import require_role
 
 
@@ -91,13 +93,7 @@ def register_case(user, mock_id, urgency, image_data):
     now = datetime.now(timezone.utc)
 
     # 1) 파일을 먼저 저장한다. 원본 바이트를 그대로 쓰고 변환하지 않는다.
-    rel_path = f"originals/{case_ref.id}/{image_ref.id}.{config.FILE_EXTENSIONS[info['format']]}"
-    file_path = data_dir() / rel_path
-    try:
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_bytes(image_data)
-    except OSError as e:
-        raise CaseError("영상 파일을 저장하지 못했습니다. 저장 폴더를 확인해 주세요.") from e
+    image_doc, file_path = _save_original(case_ref.id, image_ref.id, image_data, info, user, now)
 
     # 2) 모의 ID 표시, 케이스, 영상, 상태 기록을 한 번에 저장한다. 넷 중 일부만 저장되는 일은 없다.
     #    mock_ids/{mock_id}는 create로 만든다. 이미 있으면 묶음 전체가 실패하므로,
@@ -112,23 +108,13 @@ def register_case(user, mock_id, urgency, image_data):
         "registrar_uid": user["uid"],
         "reviewer_uids": [],
         "target_image_id": image_ref.id,
-        "flags": {"quality_check": False, "mismatch": False},
+        # 품질 "점검 필요"는 작업 목록에 표시한다 (노션 6-3). 정렬에는 쓰지 않는다.
+        "flags": {"quality_check": not image_doc["quality"]["passed"], "mismatch": False},
         "registered_at": now,
         "updated_at": now,
         "completed_at": None,
     })
-    batch.set(image_ref, {
-        "case_id": case_ref.id,
-        "storage_path": rel_path,
-        "format": info["format"],
-        "width": info["width"],
-        "height": info["height"],
-        "size_bytes": info["size_bytes"],
-        "uploaded_by": user["uid"],
-        "uploaded_at": now,
-        "quality": None,  # 품질 자동 점검(pacs/quality.py)을 만든 뒤 채운다
-        "proceed_reason": None,
-    })
+    batch.set(image_ref, image_doc)
     batch.set(event_ref, {
         "case_id": case_ref.id,
         "action": "register",
@@ -139,28 +125,118 @@ def register_case(user, mock_id, urgency, image_data):
         "at": now,
     })
     try:
-        batch.commit()
+        _commit(batch, file_path, case_ref, "케이스")
     except AlreadyExists as e:
-        _remove_file(file_path)  # 저장되지 않은 것이 확실하다
         raise duplicate from e
+    return case_ref.id
+
+
+def _quality(data):
+    """올린 영상의 품질을 점검한다. 점검 결과는 표시와 사유 안내에만 쓰고 등록을 막지 않는다 (노션 6-1)."""
+    return quality.check(viewer.to_gray(data))
+
+
+def _save_original(case_id, image_id, data, info, user, now):
+    """원본 파일을 저장하고 (images 문서에 쓸 값, 파일 경로)를 돌려준다. 품질 점검 결과를 함께 담는다."""
+    rel_path = f"originals/{case_id}/{image_id}.{config.FILE_EXTENSIONS[info['format']]}"
+    image_doc = {
+        "case_id": case_id,
+        "storage_path": rel_path,
+        "format": info["format"],
+        "width": info["width"],
+        "height": info["height"],
+        "size_bytes": info["size_bytes"],
+        "uploaded_by": user["uid"],
+        "uploaded_at": now,
+        "quality": _quality(data),
+        "proceed_reason": None,
+    }
+    file_path = data_dir() / rel_path
+    try:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_bytes(data)
+    except OSError as e:
+        raise CaseError("영상 파일을 저장하지 못했습니다. 저장 폴더를 확인해 주세요.") from e
+    return image_doc, file_path
+
+
+def _commit(batch, file_path, check_ref, what):
+    """기록 묶음을 저장한다. 실패하면 방금 저장한 파일을 정리하고 CaseError를 낸다.
+
+    AlreadyExists(create한 문서가 이미 있음)는 파일을 지운 뒤 그대로 다시 낸다. 부르는 쪽이 안내 문장을 정한다.
+    """
+    try:
+        batch.commit()
+    except AlreadyExists:
+        _remove_file(file_path)  # 저장되지 않은 것이 확실하다
+        raise
     except Exception as e:
-        # 3) 오류가 나도 실제로는 저장되고 응답만 끊겼을 수 있다. 저장됐는지 확인한 뒤에만 파일을 지운다.
-        #    기록이 있는데 파일을 지우면 원본이 사라지기 때문이다.
+        # 오류가 나도 실제로는 저장되고 응답만 끊겼을 수 있다. 저장됐는지 확인한 뒤에만 파일을 지운다.
+        # 기록이 있는데 파일을 지우면 원본이 사라지기 때문이다.
         try:
-            saved = case_ref.get().exists
+            saved = check_ref.get().exists
         except Exception:
             saved = None
         if saved:
-            return case_ref.id
+            return
         if saved is False:
             _remove_file(file_path)
-            raise CaseError("케이스를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.") from e
+            raise CaseError(f"{what}을(를) 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.") from e
         # 확인조차 안 되면 파일을 남긴다. 파일만 남는 쪽이 원본이 사라지는 쪽보다 덜 위험하다.
         raise CaseError(
-            "저장 결과를 확인하지 못했습니다. 잠시 후 목록에서 등록됐는지 확인해 주세요. "
-            "등록되지 않았다면 다시 등록하면 됩니다."
+            "저장 결과를 확인하지 못했습니다. 잠시 후 목록에서 저장됐는지 확인해 주세요. "
+            "저장되지 않았다면 다시 하면 됩니다."
         ) from e
-    return case_ref.id
+
+
+# 등록 담당자가 영상을 바꾸거나 품질 미달 사유를 남길 수 있는 상태: 접수, 보완 요청 (노션 2·3장)
+REGISTRAR_EDIT_STATUSES = ("received", "revision_requested")
+
+
+def _editable_case(user, case_id):
+    require_role(user, "registrar")
+    case = get_case(user, case_id)  # 본인이 등록한 케이스만
+    if case["status"] not in REGISTRAR_EDIT_STATUSES:
+        raise CaseError("접수 또는 보완 요청 상태에서만 영상을 바꾸거나 사유를 입력할 수 있습니다.")
+    return case
+
+
+def replace_image(user, case_id, image_data):
+    """품질 미달이거나 보완 요청을 받은 케이스의 검토 대상 영상을 새로 올린다. 새 영상 ID를 돌려준다.
+
+    이전 영상은 지우지 않는다(원본 보존). 케이스의 target_image_id만 새 영상으로 바꾼다.
+    """
+    _editable_case(user, case_id)
+    info = validate_image(image_data)
+    db = firebase_app.db()
+    case_ref = db.collection("cases").document(case_id)
+    image_ref = db.collection("images").document()
+    now = datetime.now(timezone.utc)
+    image_doc, file_path = _save_original(case_id, image_ref.id, image_data, info, user, now)
+
+    batch = db.batch()
+    batch.set(image_ref, image_doc)
+    batch.update(case_ref, {
+        "target_image_id": image_ref.id,
+        "flags.quality_check": not image_doc["quality"]["passed"],
+        "updated_at": now,
+    })
+    _commit(batch, file_path, image_ref, "영상")
+    return image_ref.id
+
+
+def set_proceed_reason(user, case_id, reason):
+    """품질 "점검 필요" 영상을 다시 올리지 않고 그대로 진행하는 사유를 남긴다 (노션 6-1)."""
+    case = _editable_case(user, case_id)
+    reason = (reason or "").strip()
+    if not reason:
+        raise CaseError("그대로 진행하는 사유를 입력해 주세요.")
+    image_ref = firebase_app.db().collection("images").document(case["target_image_id"])
+    image = image_ref.get().to_dict() or {}
+    if (image.get("quality") or {}).get("passed", True):
+        raise CaseError("품질 점검을 통과한 영상이라 사유를 남길 필요가 없습니다.")
+    # "점검 필요" 표시(flags.quality_check)는 그대로 둔다. 검토자도 품질 문제를 알고 봐야 하기 때문이다.
+    image_ref.update({"proceed_reason": reason})
 
 
 def _remove_file(path):
@@ -221,14 +297,20 @@ def get_case(user, case_id):
     return {"id": doc.id, **case}
 
 
-def load_image(user, image_id):
-    """영상 정보와 파일 바이트를 돌려준다. 파일이 없으면 bytes는 None이다."""
+def get_image(user, image_id):
+    """영상 정보(파일 바이트 없이)를 돌려준다."""
     require_role(user, *config.ROLES)
     doc = firebase_app.db().collection("images").document(image_id).get()
     if not doc.exists:
         raise CaseError("영상을 찾을 수 없습니다.")
     image = {"id": doc.id, **doc.to_dict()}
     get_case(user, image["case_id"])  # 영상이 속한 케이스를 볼 권한이 있는지 확인
+    return image
+
+
+def load_image(user, image_id):
+    """영상 정보와 파일 바이트를 돌려준다. 파일이 없으면 bytes는 None이다."""
+    image = get_image(user, image_id)
     path = data_dir() / image["storage_path"]
     # 개발 중에는 다른 사람이 등록한 영상 파일이 내 컴퓨터에 없을 수 있다.
     image["bytes"] = path.read_bytes() if path.exists() else None

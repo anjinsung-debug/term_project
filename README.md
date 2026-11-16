@@ -91,7 +91,7 @@
   - 같은 사람이 같은 설정·ROI로 다시 저장하면 기록을 새로 만들지 않고 기존 ID를 돌려줍니다. 검토 제출 때 `reviews.processing_log_ids`에 이 ID를 넣으면 됩니다.
   - `processing.list_logs(user, case_id)`, `processing.load_result(user, log_id)`: 검토 담당자는 본인 기록만 받습니다. 처리 이력에 ROI가 있어 블라인드 규칙을 지키기 위해서입니다.
   - `processing.features(original, result, roi)`: 전체 품질 지표 전후와 ROI 통계(평균·분산·히스토그램) 전후. 저장되는 `features`와 같은 형태입니다.
-- 작업 목록 화면은 `pacs/cases.py`의 `list_cases(user, status=None, urgency=None, mock_id_query="")`를 씁니다. 역할에 맞는 케이스만 돌려주고(등록 담당: 본인 등록, 검토 담당: 본인 배정, 관리 담당: 전체), 각 항목은 Firestore 필드에 문서 ID `"id"`를 더한 딕셔너리입니다. 케이스 1건은 `get_case(user, case_id)`, 영상은 `load_image(user, image_id)`로 가져옵니다.
+- 작업 목록 화면은 `pacs/cases.py`의 `list_cases(user, status=None, urgency=None, mock_id_query="")`를 씁니다. 역할에 맞는 케이스만 돌려주고(등록 담당: 본인 등록, 검토 담당: 본인 배정, 관리 담당: 전체), 각 항목은 Firestore 필드에 문서 ID `"id"`를 더한 딕셔너리입니다. 케이스 1건은 `get_case(user, case_id)`, 영상은 `load_image(user, image_id)`(파일 포함) 또는 `get_image(user, image_id)`(기록만)로 가져옵니다. 품질 "점검 필요" 표시는 각 항목의 `flags.quality_check`를 보면 됩니다.
 - 케이스 상태는 `pacs/workflow.py`로만 바꿉니다. `cases` 문서의 `status`를 직접 고치지 않습니다.
   - `workflow.transition(user, case_id, 동작, reason=None, reviewer_uids=None)`: 전이 하나를 실행하고 새 상태를 돌려줍니다. 역할, 담당 범위, 현재 상태, 사유를 검사하고 `case_events` 기록과 `completed_at`을 함께 저장합니다.
   - 동작 이름은 `workflow.TRANSITIONS`에 있습니다 (`assign`, `start_review`, `auto_match`, `auto_mismatch`, `arbitrate`, `request_revision`, `revision_done`, `reopen`). 화면 이름은 `config.LABELS`입니다.
@@ -230,6 +230,15 @@ python scripts/prepare_samples.py 압축을_푼_폴더
 | 선명도 (Laplacian 분산) | 20 미만 | 최솟값 38.5 | 흐리게: 2.5~4.0 |
 
 판정 결과: 가공본 8장과 AP 5장은 모두 점검 필요, 기준 영상은 20장 중 19장이 통과합니다. 남은 1장(`00028539_000.png`)은 눈으로 봐도 대비가 낮은 영상입니다.
+
+등록할 때 처리:
+
+- 영상을 올리면(등록, 다시 올리기) 품질을 점검해 `images.quality`에 저장합니다. "점검 필요"이면 `cases.flags.quality_check`가 `True`가 됩니다.
+- 품질 미달이어도 등록은 됩니다. 케이스 등록 화면의 "품질 점검이 필요한 케이스"에서 등록 담당자가 둘 중 하나를 합니다.
+  - 다시 올리기(`cases.replace_image`): 새 영상이 검토 대상(`target_image_id`)이 되고, 이전 영상은 기록과 파일이 그대로 남습니다.
+  - 사유 입력 후 그대로 진행(`cases.set_proceed_reason`): `images.proceed_reason`에 저장합니다. "점검 필요" 표시는 검토자도 알 수 있게 남겨 둡니다.
+- 둘 다 접수·보완 요청 상태에서만 할 수 있습니다. 자동 보정은 하지 않습니다.
+- 이 기능 전에 등록한 케이스는 `images.quality`가 비어 있고 "통과"로 표시됩니다. 다시 등록하면 점검됩니다.
 
 알려진 한계: 잡음이 많으면 선명도 값이 크게 올라갑니다(가공본 약 2,000). 선명도 지표가 잡음도 경계로 세기 때문입니다. 잡음은 잡음 지표로만 판정합니다. 너무 밝은 영상은 시험하지 않아 밝기 상한은 두지 않았습니다.
 
