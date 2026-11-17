@@ -13,6 +13,8 @@ import plotly.express as px
 import streamlit as st
 from PIL import Image, UnidentifiedImageError
 
+from pacs import dicom
+
 # 도구 모음: 확대(zoom), 이동(pan), 확대·축소 버튼, 초기화(reset)만 남긴다.
 _CHART_CONFIG = {
     "displaylogo": False,
@@ -27,6 +29,8 @@ def to_gray(data):
 
     파일이 손상되어 풀 수 없으면 이유를 담은 ValueError를 낸다. 화면은 이것을 안내로 보여준다.
     """
+    if dicom.is_dicom(data):
+        return dicom.read(data)[0]  # DICOM은 pacs/dicom.py가 8비트 흑백으로 바꾼다
     try:
         with Image.open(io.BytesIO(data)) as img:
             return np.asarray(img.convert("L"), dtype=np.uint8)

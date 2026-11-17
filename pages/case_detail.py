@@ -31,8 +31,11 @@ c2.metric("긴급도", config.LABELS[case["urgency"]])
 c3.metric("상태", config.LABELS[case["status"]])
 c4.metric("등록 시각", cases.format_kst(case.get("registered_at")))
 st.caption(
-    f"{config.LABELS[case['exam_type']]} · {image['format'].upper()} · "
-    f"{image['width']}×{image['height']} · 모의 케이스"
+    f"{config.LABELS[case['exam_type']]} · {image['format'].upper()}"
+    + (f" ({image['modality']})" if image.get("modality") else "")
+    + f" · {image['width']}×{image['height']}"
+    + (f" · 픽셀 간격 {image['pixel_spacing'][0]:.3f} mm" if image.get("pixel_spacing") else "")
+    + " · 모의 케이스"
 )
 quality = image.get("quality")
 if quality and not quality["passed"]:

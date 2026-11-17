@@ -6,6 +6,7 @@ import streamlit as st
 from pacs import auth, cases, config
 
 user = auth.require_login()
+UPLOAD_TYPES = ["png", "jpg", "jpeg", "dcm"]
 st.header("케이스 등록")
 
 if user["role"] != "registrar":
@@ -13,8 +14,8 @@ if user["role"] != "registrar":
     st.stop()
 
 st.caption(
-    f"흉부 X-ray PNG 또는 JPEG, 가로·세로 {config.MIN_IMAGE_SIDE}픽셀 이상, "
-    f"{config.MAX_UPLOAD_MB}MB 이하만 올릴 수 있습니다. 모의 케이스만 등록합니다."
+    f"흉부 X-ray PNG·JPEG 또는 DICOM({'·'.join(config.DICOM_MODALITIES)}, 압축되지 않은 것), "
+    f"가로·세로 {config.MIN_IMAGE_SIDE}픽셀 이상, {config.MAX_UPLOAD_MB}MB 이하만 올릴 수 있습니다. 모의 케이스만 등록합니다."
 )
 
 with st.form("register", clear_on_submit=True):
@@ -31,7 +32,7 @@ with st.form("register", clear_on_submit=True):
         placeholder="선택해 주세요",
         help="처방에서 넘어온 값을 가정한 모의 입력입니다.",
     )
-    upload = st.file_uploader("흉부 X-ray 영상", type=["png", "jpg", "jpeg"])
+    upload = st.file_uploader("흉부 X-ray 영상", type=UPLOAD_TYPES)
     submitted = st.form_submit_button("등록")
 
 if submitted:
@@ -72,7 +73,7 @@ if pending:
             st.caption(quality_metrics(image["quality"]))
             again, proceed = st.columns(2)
             with again.form(f"replace_{r['id']}", clear_on_submit=True):
-                new_upload = st.file_uploader("다시 올리기", type=["png", "jpg", "jpeg"])
+                new_upload = st.file_uploader("다시 올리기", type=UPLOAD_TYPES)
                 if st.form_submit_button("이 영상으로 바꾸기"):
                     try:
                         if new_upload is None:
