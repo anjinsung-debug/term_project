@@ -1,0 +1,15 @@
+# systemd 서비스 양식. deploy/setup.sh가 __APP_DIR__, __USER__, __PORT__를 채워 /etc/systemd/system/pacs.service로 설치한다.
+[Unit]
+Description=교육용 웹 PACS (Streamlit)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=__USER__
+WorkingDirectory=__APP_DIR__
+ExecStart=__APP_DIR__/.venv/bin/python -m streamlit run app.py --server.port __PORT__ --server.address 0.0.0.0 --server.headless true
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
