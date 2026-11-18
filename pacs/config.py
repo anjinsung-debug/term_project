@@ -54,8 +54,12 @@ LABELS = {
 }
 
 # --- 업로드 (노션 1장, 6-1) ---
-SUPPORTED_FORMATS = ("png", "jpeg")
-FILE_EXTENSIONS = {"png": "png", "jpeg": "jpg"}
+SUPPORTED_FORMATS = ("png", "jpeg", "dicom")
+FILE_EXTENSIONS = {"png": "png", "jpeg": "jpg", "dicom": "dcm"}
+# DICOM은 흉부 X-ray(DX: 디지털, CR: 컴퓨터 방사선)만 받는다 (pacs/dicom.py).
+DICOM_MODALITIES = ("DX", "CR")
+# DICOM을 8비트로 바꿀 때 잘라낼 밝기 분포의 하위·상위 백분위. 파일의 window 값 대신 쓴다 (pacs/dicom.py).
+DICOM_WINDOW_PERCENTILES = (0.5, 99.5)
 MIN_IMAGE_SIDE = 256  # 가로·세로가 이보다 작으면 "너무 작은 파일"로 거부
 MAX_UPLOAD_MB = 20
 

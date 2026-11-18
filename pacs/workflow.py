@@ -9,10 +9,11 @@ from collections import namedtuple
 from datetime import datetime, timezone
 
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 from pacs import config, firebase_app
 from pacs.auth import require_role
-from pacs.cases import CaseError, can_view
+from pacs.cases import CaseError, can_view, get_case
 
 # 시스템이 자동으로 바꾸는 전이(두 검토 제출 후 판정)에 쓰는 실행 주체.
 # 화면에서 로그인한 사용자는 이 역할을 가질 수 없다 (auth.check_role이 config.ROLES만 허용).
@@ -150,3 +151,40 @@ def allowed_actions(user, case):
         if user and user.get("role") == t.role and can_view(user, case):
             result.append(action)
     return result
+
+
+# --- 화면에서 쓰는 조회 ---
+
+def list_events(user, case_id):
+    """케이스의 상태 변경 기록(case_events)을 오래된 순으로 돌려준다. 케이스를 볼 수 있는 사람만."""
+    get_case(user, case_id)  # 역할·담당 범위 확인
+    query = firebase_app.db().collection("case_events").where(filter=FieldFilter("case_id", "==", case_id))
+    rows = [{"id": d.id, **d.to_dict()} for d in query.stream()]
+    rows.sort(key=lambda r: r.get("at") or datetime.min.replace(tzinfo=timezone.utc))
+    return rows
+
+
+def reviewer_accounts(user):
+    """배정할 수 있는 검토 담당자 목록 [{"uid", "name"}]. 관리 담당자만."""
+    require_role(user, "manager")
+    query = firebase_app.db().collection("users").where(filter=FieldFilter("role", "==", "reviewer"))
+    rows = [{"uid": d.id, "name": _name(d.to_dict())} for d in query.stream()]
+    return sorted(rows, key=lambda r: r["name"])
+
+
+def display_names(user, uids):
+    """{uid: 화면에 보일 이름}. 배정된 검토자와 기록의 실행자를 보여줄 때 쓴다."""
+    require_role(user, *config.ROLES)
+    users = firebase_app.db().collection("users")
+    names = {}
+    for uid in set(uids) - {None}:
+        if uid == SYSTEM["uid"]:
+            names[uid] = SYSTEM["name"]
+            continue
+        doc = users.document(uid).get()
+        names[uid] = _name(doc.to_dict() or {}) if doc.exists else uid
+    return names
+
+
+def _name(account):
+    return account.get("display_name") or account.get("email") or "(이름 없음)"

@@ -5,7 +5,7 @@
 > 공개 영상과 모의 케이스만 사용합니다. 모든 수치는 교육용 결과이며 진단에 사용할 수 없습니다.
 
 - 기술 스택: Python, Streamlit, Firebase Authentication, Cloud Firestore, JCloud
-- 지원 영상: 흉부 X-ray (PNG, JPEG)
+- 지원 영상: 흉부 X-ray (PNG, JPEG, DICOM DX·CR)
 
 ## 폴더 구조
 
@@ -24,6 +24,7 @@
 | `pacs/workflow.py` | 상태 전이 표와 전이 실행, 변경 기록 |
 | `pacs/processing.py` | 알고리즘 실행과 처리 이력 저장 |
 | `pacs/viewer.py` | 뷰어 (확대·이동·초기화, 원본과 결과 비교, ROI 선택) |
+| `pacs/dicom.py` | DICOM 흉부 X-ray 읽기와 8비트 변환 |
 | `pacs/algorithms/__init__.py` | 만들어진 알고리즘 모듈을 찾아 목록으로 돌려줌 (`algorithms.available()`) |
 | `pages/register.py` | 케이스 등록 화면 |
 | `pages/case_detail.py` | 케이스 상세 화면 |
@@ -35,6 +36,7 @@
 |---|---|
 | `pacs/quality.py` | 품질 지표 계산과 판정 |
 | `scripts/prepare_samples.py` | 시연·실험용 영상 고르기와 가공본 만들기 |
+| `scripts/fetch_dicom_samples.py` | 시연용 DICOM 흉부 X-ray 받기 (LIDC-IDRI) |
 | `pacs/algorithms/clahe.py` | CLAHE |
 
 ### 블라인드 이중 검토와 ROI 불일치 감지 (고영민)
@@ -78,7 +80,7 @@
     예: `PARAMS = {"clip_limit": {"min": 1.0, "max": 10.0, "default": 2.0, "step": 0.5}}`
 - ROI는 원본 영상의 픽셀 좌표로 주고받습니다. 형태는 `{"x": 정수, "y": 정수, "w": 정수, "h": 정수}`이고, `x`, `y`는 왼쪽 위 모서리입니다. "ROI 없음"은 `None`입니다.
 - 뷰어는 `pacs/viewer.py` 하나만 둡니다. 검토·중재·케이스 상세 화면은 이것을 불러 씁니다.
-  - `viewer.to_gray(파일바이트)`: 흑백 `numpy.uint8` 배열로 바꾸기 (컬러도 흑백으로)
+  - `viewer.to_gray(파일바이트)`: 흑백 `numpy.uint8` 배열로 바꾸기 (컬러도 흑백으로, DICOM도 8비트로). 영상을 다루는 코드는 이 함수만 거치면 PNG와 DICOM을 구분할 필요가 없습니다
   - `viewer.show(image, key, select_roi=True)`: 영상을 보여주고 사용자가 그린 ROI를 위 형태로 돌려줌. 그리지 않았으면 `None`
   - `viewer.show(image, key, rois=[(roi, "검토자 A", "red"), (roi, "검토자 B", "blue")])`: 저장된 ROI를 겹쳐 그리기 (중재 화면용)
   - `viewer.compare(original, processed, key)`: 원본과 처리 결과를 나란히. 확대·이동이 두 영상에 함께 적용
@@ -99,6 +101,8 @@
   - 다른 기록과 한 번에 저장해야 하면(예: 중재 의견과 `arbitrate`) 직접 만든 Firestore 트랜잭션 안에서 `workflow.apply(transaction, user, case_id, 동작, ...)`를 부릅니다. 읽기를 모두 끝낸 뒤에 부릅니다.
   - 실패하면 `TransitionError`, `PermissionError`, `CaseError`를 냅니다. 메시지를 화면에 그대로 보여주면 됩니다.
   - 버튼을 고를 때는 `workflow.allowed_actions(user, case)`를 씁니다.
+  - 케이스 상세 화면의 "업무 진행"에 배정·검토 시작·보완 요청·보완 완료·재검토 버튼이 있습니다. 중재 확정(`arbitrate`)은 의견과 함께 저장해야 해서 중재 화면에서 합니다.
+  - `workflow.list_events(user, case_id)`: 상태 변경 기록(오래된 순). `workflow.reviewer_accounts(user)`: 배정할 검토 담당자 목록(관리 담당자만). `workflow.display_names(user, uids)`: UID를 화면 이름으로.
 - 화면을 새로 만들면 `app.py`의 역할별 메뉴(`menu`)에 추가합니다. 화면 파일 맨 앞에서는 `auth.require_login()`을 부르고, 역할이 맞지 않으면 안내 후 멈춥니다.
 - 시각은 UTC로 저장하고, 화면에는 `cases.format_kst(시각)`으로 한국 시간을 보여줍니다.
 - 품질 점검의 선명도 지표가 Canny를 쓸 경우 `pacs/algorithms/canny.py`를 불러 씁니다.
@@ -187,14 +191,18 @@ def assign_reviewers(user, case_id, reviewer_uids):
 영상 파일(원본, 처리 결과)은 Firestore에 넣지 않고 폴더에 저장합니다. Firestore에는 파일의 위치만 적습니다. Firebase Storage는 유료 요금제가 필요해 쓰지 않습니다.
 
 - 저장 폴더는 `secrets.toml`의 `data_dir`로 정합니다. 기본값은 프로젝트 폴더 안의 `data`이고, 저장소에는 올라가지 않습니다.
-- 원본은 `originals/{케이스ID}/{영상ID}.png` 또는 `.jpg`에 올린 파일 그대로 저장합니다. 형식을 바꾸지 않습니다.
+- 원본은 `originals/{케이스ID}/{영상ID}.png`, `.jpg`, `.dcm`에 올린 파일 그대로 저장합니다. 형식을 바꾸지 않습니다.
 - 등록할 때는 파일을 먼저 저장하고, 모의 ID 표시·케이스·영상·상태 기록을 한 번에 저장합니다.
   - 기록 저장에서 오류가 나면 **실제로 저장됐는지 확인한 뒤** 저장되지 않았을 때만 파일을 지웁니다. 응답만 끊기고 저장은 된 경우 원본을 지우지 않기 위해서입니다. 확인조차 안 되면 파일을 남기고 목록에서 확인하라고 안내합니다.
   - 같은 모의 ID는 `mock_ids/{모의ID}` 문서를 `create`로 만들어 막습니다. 문서가 이미 있으면 저장 전체가 실패하므로, 두 사람이 동시에 등록해도 한 명만 성공합니다. 그래서 모의 ID는 문서 ID에 쓸 수 있게 영문·숫자로 시작하고 영문·숫자·`-`·`_`로 40자 이내여야 합니다.
   - 영상 파일은 등록할 때 끝까지 풀어 봅니다. 뒤가 잘린 JPEG처럼 손상된 파일은 등록 단계에서 거부합니다. 이미 저장된 파일이 손상돼 있으면 상세 화면은 오류 대신 안내를 보여줍니다.
 - 처리 결과는 `results/{영상ID}/{처리이력ID}.png`에 PNG로 저장합니다. 원본은 고치지 않습니다.
   - 결과 파일을 먼저 저장하고 기록을 저장합니다. 파일 저장이 실패하면 `status: "failed"`로 기록을 남기고, 기록 저장이 실패하면 저장되지 않은 것을 확인한 뒤에만 결과 파일을 지웁니다.
-- 받는 파일: PNG 또는 JPEG, 가로·세로 256픽셀 이상, 20MB 이하. 손상된 파일과 다른 형식은 이유와 함께 거부합니다.
+- 받는 파일: PNG, JPEG, DICOM, 가로·세로 256픽셀 이상, 20MB 이하. 손상된 파일과 다른 형식은 이유와 함께 거부합니다.
+- DICOM은 흉부 X-ray(Modality DX·CR), 흑백 단일 영상, 압축되지 않은 것만 받습니다. `images`에 `modality`와 `pixel_spacing`(mm, 없으면 비움)을 함께 저장합니다.
+  - 화면·품질 점검·영상처리에는 `pacs/dicom.py`가 만든 8비트 영상을 씁니다. 순서: 모달리티 변환 → 밝기 분포의 0.5~99.5% 구간을 0~255로 펼치기 → MONOCHROME1이면 반전.
+  - 파일의 WindowCenter/Width는 쓰지 않습니다. LIDC-IDRI 흉부 X-ray에는 CT 폐 설정 같은 값(-600/1600)이 들어 있어, 그대로 쓰면 영상이 하얗게 날아갔습니다.
+  - 환자 이름 등 DICOM 태그는 저장하거나 화면에 보여주지 않습니다.
 - 배포 서버(JCloud)에서는 서버를 다시 시작해도 지워지지 않는 폴더를 지정합니다.
 - 개발 중에는 각자 컴퓨터에 파일이 따로 저장됩니다. 다른 사람이 등록한 케이스는 기록만 있고 영상 파일이 없을 수 있습니다. 이 경우 화면에 오류 대신 안내 문구를 보여줍니다.
 
@@ -217,6 +225,17 @@ python scripts/prepare_samples.py 압축을_푼_폴더
 
 - 진단 결과(Finding Labels)는 고르는 데 쓰지 않습니다. 이 시스템은 진단을 하지 않습니다.
 - 고른 파일과 가공 방법은 `data/samples/manifest.csv`에 기록됩니다.
+
+### DICOM 시연 영상
+
+TCIA의 [LIDC-IDRI](https://www.cancerimagingarchive.net/collection/lidc-idri/)에서 흉부 X-ray DICOM을 받습니다. 계정 없이 받을 수 있습니다.
+
+```bash
+python scripts/fetch_dicom_samples.py
+```
+
+- 기본은 DX 8명, CR 2명이고 환자당 1장입니다 (`--dx`, `--cr`로 조절). 결과는 `data/samples_dicom/`에 `manifest.csv`, TCIA의 `LICENSE`와 함께 저장됩니다.
+- 2026-11-17에 받은 10장은 모두 등록 검사를 통과했고, 품질 점검도 기존 기준값으로 모두 "통과"였습니다 (밝기 137~165, 대비 53~73, 잡음 2.1~2.8, 선명도 102~443). 기준값은 PNG 기준 영상으로 정한 것이므로, DICOM에서 "점검 필요"가 나오는 경우는 따로 확인합니다.
 
 ### 품질 기준값
 
@@ -267,3 +286,8 @@ img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
 - 실제로 받은 곳: Kaggle "Random Sample of NIH Chest X-ray Dataset" (약 5,600장 샘플), 라이선스 CC0: Public Domain
 - Xiaosong Wang, Yifan Peng, Le Lu, Zhiyong Lu, Mohammadhadi Bagheri, Ronald Summers. "ChestX-ray8: Hospital-scale Chest X-ray Database and Benchmarks." IEEE CVPR, pp. 3462-3471, 2017.
 - 품질 미달 영상은 위 원본에 밝기 저하, 잡음, 흐림을 넣어 직접 가공한 것입니다.
+- DICOM 영상: LIDC-IDRI (The Cancer Imaging Archive), 라이선스 CC BY 3.0. 흉부 X-ray(DX·CR)만 사용합니다.
+  - Armato III, S. G., McLennan, G., Bidaut, L., et al. "The Lung Image Database Consortium (LIDC) and Image Database Resource Initiative (IDRI): A completed reference database of lung nodules on CT scans." Medical Physics 38(2), pp. 915-931, 2011.
+  - 데이터 DOI: https://doi.org/10.7937/K9/TCIA.2015.LO9QL9SX
+  - Clark, K., Vendt, B., Smith, K., et al. "The Cancer Imaging Archive (TCIA): Maintaining and Operating a Public Information Repository." Journal of Digital Imaging 26(6), pp. 1045-1057, 2013.
+  - TCIA 이용 정책에 따라 참여자를 식별하려는 용도로 쓰지 않고, 발표·보고서에 데이터셋과 저장소를 밝힙니다.

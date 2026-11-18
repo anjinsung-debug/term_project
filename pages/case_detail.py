@@ -1,7 +1,7 @@
 """케이스 상세 화면 (모든 역할). 볼 수 있는 케이스의 정보와 영상을 보여준다."""
 import streamlit as st
 
-from pacs import algorithms, auth, cases, config, processing, viewer
+from pacs import algorithms, auth, cases, config, processing, viewer, workflow
 
 user = auth.require_login()
 st.header("케이스 상세")
@@ -31,8 +31,11 @@ c2.metric("긴급도", config.LABELS[case["urgency"]])
 c3.metric("상태", config.LABELS[case["status"]])
 c4.metric("등록 시각", cases.format_kst(case.get("registered_at")))
 st.caption(
-    f"{config.LABELS[case['exam_type']]} · {image['format'].upper()} · "
-    f"{image['width']}×{image['height']} · 모의 케이스"
+    f"{config.LABELS[case['exam_type']]} · {image['format'].upper()}"
+    + (f" ({image['modality']})" if image.get("modality") else "")
+    + f" · {image['width']}×{image['height']}"
+    + (f" · 픽셀 간격 {image['pixel_spacing'][0]:.3f} mm" if image.get("pixel_spacing") else "")
+    + " · 모의 케이스"
 )
 quality = image.get("quality")
 if quality and not quality["passed"]:
@@ -43,6 +46,67 @@ if quality and not quality["passed"]:
     )
 elif quality:
     st.caption("품질 자동 점검: 통과 (교육용 결과)")
+
+
+# --- 업무 진행 (상태 전이, 노션 3장) ---
+# 버튼은 allowed_actions로 고르지만, 실제 검사는 workflow.transition이 데이터 접근 단계에서 다시 한다.
+reviewer_uids = case.get("reviewer_uids") or []
+names = workflow.display_names(user, reviewer_uids)
+st.caption("검토 담당자: " + (", ".join(names[u] for u in reviewer_uids) if reviewer_uids else "배정 전"))
+
+ACTION_HELP = {
+    "assign": "서로 다른 검토 담당자 2명을 고릅니다.",
+    "start_review": "검토를 시작하면 영상처리 결과를 저장할 수 있습니다. 두 검토자 중 한 명만 누르면 됩니다.",
+    "request_revision": "영상이나 정보 보완이 필요하면 사유를 적어 등록 담당자에게 돌려보냅니다.",
+    "revision_done": "케이스 등록 화면에서 영상을 다시 올렸거나 보완을 마쳤으면 누릅니다.",
+    "reopen": "완료된 케이스를 다시 검토합니다. 사유가 변경 이력에 남습니다.",
+}
+# 중재 확정은 두 검토 결과를 비교한 의견과 함께 저장해야 해서 중재 화면에서 한다.
+actions = [a for a in workflow.allowed_actions(user, case) if a != "arbitrate"]
+if actions:
+    with st.container(border=True):
+        st.markdown("**업무 진행**")
+        for action in actions:
+            with st.form(f"{action}_{case_id}"):
+                st.caption(ACTION_HELP[action])
+                kwargs = {}
+                if action == "assign":
+                    accounts = workflow.reviewer_accounts(user)
+                    by_uid = {a["uid"]: a["name"] for a in accounts}
+                    kwargs["reviewer_uids"] = st.multiselect(
+                        "검토 담당자 2명", list(by_uid), format_func=by_uid.get, max_selections=2,
+                    )
+                if workflow.TRANSITIONS[action].needs_reason:
+                    kwargs["reason"] = st.text_area("사유")
+                if st.form_submit_button(config.LABELS[action]):
+                    try:
+                        new_status = workflow.transition(user, case_id, action, **kwargs)
+                    except (workflow.TransitionError, cases.CaseError, PermissionError) as e:
+                        st.error(str(e))
+                    else:
+                        st.toast(f"{config.LABELS[action]}: {config.LABELS[new_status]}(으)로 바뀌었습니다.")
+                        st.rerun()
+if case["status"] == "arbitration" and user["role"] == "manager":
+    st.info("두 검토자의 ROI가 어긋나 중재 중입니다. 중재 화면에서 두 결과를 비교하고 확정합니다.")
+if case["status"] == "revision_requested" and user["role"] == "registrar":
+    st.info("보완 요청을 받았습니다. 케이스 등록 화면에서 영상을 다시 올린 뒤 '보완 완료'를 눌러 주세요.")
+
+with st.expander("상태 변경 이력"):
+    events = workflow.list_events(user, case_id)
+    actors = workflow.display_names(user, [e.get("actor_uid") for e in events])
+    st.dataframe(
+        [
+            {
+                "시각": cases.format_kst(e.get("at"), with_seconds=True),
+                "동작": config.LABELS.get(e["action"], e["action"]),
+                "상태": f"{config.LABELS.get(e.get('from_status'), '-')} → {config.LABELS[e['to_status']]}",
+                "실행자": actors.get(e.get("actor_uid"), "-"),
+                "사유": e.get("reason") or "",
+            }
+            for e in events
+        ],
+        hide_index=True,
+    )
 
 if image["bytes"] is None:
     st.warning(

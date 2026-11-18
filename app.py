@@ -20,7 +20,9 @@ with st.sidebar:
         st.rerun()
     st.caption(
         "영상 출처: [NIH ChestX-ray14](https://nihcc.app.box.com/v/ChestXray-NIHCC), "
-        "NIH Clinical Center 제공 (Wang et al., CVPR 2017). 일부 영상은 품질 점검을 위해 가공했습니다."
+        "NIH Clinical Center 제공 (Wang et al., CVPR 2017). 일부 영상은 품질 점검을 위해 가공했습니다. "
+        "DICOM 영상: [LIDC-IDRI](https://doi.org/10.7937/K9/TCIA.2015.LO9QL9SX), The Cancer Imaging Archive, "
+        "CC BY 3.0 (Armato et al., Med. Phys. 2011)."
     )
 
 
