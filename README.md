@@ -103,6 +103,14 @@
   - 버튼을 고를 때는 `workflow.allowed_actions(user, case)`를 씁니다.
   - 케이스 상세 화면의 "업무 진행"에 배정·검토 시작·보완 요청·보완 완료·재검토 버튼이 있습니다. 중재 확정(`arbitrate`)은 의견과 함께 저장해야 해서 중재 화면에서 합니다.
   - `workflow.list_events(user, case_id)`: 상태 변경 기록(오래된 순). `workflow.reviewer_accounts(user)`: 배정할 검토 담당자 목록(관리 담당자만). `workflow.display_names(user, uids)`: UID를 화면 이름으로.
+- 검토·판정·중재 기록은 `pacs/reviews.py`로만 읽고 씁니다. 블라인드 규칙을 이 모듈의 함수가 지키기 때문입니다.
+  - `reviews.save_draft(user, case_id, roi, memo, processing_log_ids=None)`: 제출 전 저장. "검토 중"이고 본인에게 배정된 케이스에서 검토 담당만. 여러 번 저장해도 `reviews/{케이스ID_검토자UID}` 문서 하나를 덮어씁니다.
+  - `reviews.submit(user, case_id, roi, memo, processing_log_ids=None)`: 제출. 두 번째 제출이면 겹침 비율로 판정해 `comparisons/{케이스ID}`를 저장하고 `auto_match`(완료) 또는 `auto_mismatch`(중재 중)를 같은 트랜잭션에서 실행합니다. `{"status", "verdict", "iou"}`를 돌려줍니다. 제출한 뒤에는 고칠 수 없습니다.
+  - `processing_log_ids`에는 `processing.save`가 돌려준 ID 중 본인이 이 영상에 저장한 것만 넣을 수 있습니다.
+  - `reviews.get_review(user, case_id, reviewer_uid)`, `reviews.list_reviews(user, case_id)`: 검토 담당은 두 사람 모두 제출하기 전에는 본인 검토만 받습니다(다른 사람 것은 `PermissionError`). 관리 담당은 언제든 받습니다.
+  - `reviews.get_comparison(user, case_id)`: 판정·중재 기록. 두 검토가 모두 제출되기 전에는 `None`.
+  - `reviews.arbitrate(user, case_id, choice, reason, custom_roi=None)`: 관리 담당이 최종 ROI(`"a"`, `"b"`, `"custom"`, `"none"`)와 사유를 저장하고 `arbitrate`(완료)를 같은 트랜잭션에서 실행합니다.
+  - 실패하면 `ReviewError`, `TransitionError`, `PermissionError`, `CaseError`를 냅니다. 메시지를 화면에 그대로 보여주면 됩니다.
 - 화면을 새로 만들면 `app.py`의 역할별 메뉴(`menu`)에 추가합니다. 화면 파일 맨 앞에서는 `auth.require_login()`을 부르고, 역할이 맞지 않으면 안내 후 멈춥니다.
 - 시각은 UTC로 저장하고, 화면에는 `cases.format_kst(시각)`으로 한국 시간을 보여줍니다.
 - 품질 점검의 선명도 지표가 Canny를 쓸 경우 `pacs/algorithms/canny.py`를 불러 씁니다.
