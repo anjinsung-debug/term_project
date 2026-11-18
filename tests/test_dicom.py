@@ -10,8 +10,9 @@ from pacs import cases, dicom, quality, viewer
 
 
 def make_dicom(pixels=None, modality="DX", photometric="MONOCHROME2", spacing=(0.143, 0.143),
-               syntax=ExplicitVRLittleEndian, slope=1, intercept=0):
-    """시험용 DICOM 바이트. 기본은 512×512, 14비트 값이 들어 있는 흉부 X-ray(DX) 모양."""
+               syntax=ExplicitVRLittleEndian, slope=1, intercept=0,
+               identity_removed="YES", patient_name="", birth_date=""):
+    """시험용 DICOM 바이트. 기본은 512×512, 14비트 값이 들어 있는 비식별 흉부 X-ray(DX) 모양."""
     if pixels is None:
         yy, xx = np.mgrid[0:512, 0:512]
         pixels = (2000 + 10 * xx + 5 * yy).astype(np.uint16)  # 2000~9655 사이의 밝기 기울기
@@ -21,7 +22,10 @@ def make_dicom(pixels=None, modality="DX", photometric="MONOCHROME2", spacing=(0
     meta.TransferSyntaxUID = syntax
     ds = FileDataset("test.dcm", {}, file_meta=meta, preamble=b"\0" * 128)
     ds.Modality = modality
-    ds.PatientName = ""
+    ds.PatientName = patient_name
+    ds.PatientBirthDate = birth_date
+    if identity_removed is not None:
+        ds.PatientIdentityRemoved = identity_removed
     ds.Rows, ds.Columns = pixels.shape
     ds.SamplesPerPixel = 1
     ds.PhotometricInterpretation = photometric
@@ -108,3 +112,22 @@ def test_png_has_no_dicom_fields():
     Image.new("L", (300, 300), 128).save(buf, format="PNG")
     info = cases.validate_image(buf.getvalue())
     assert info["modality"] is None and info["pixel_spacing"] is None
+
+
+# --- 비식별 검사 (등록할 때만) ---
+
+@pytest.mark.parametrize("kwargs, message", [
+    ({"identity_removed": None}, "비식별 처리 표시"),
+    ({"identity_removed": "NO"}, "비식별 처리 표시"),
+    ({"patient_name": "Hong^Gildong"}, "환자 이름이나 생년월일"),
+    ({"birth_date": "19700101"}, "환자 이름이나 생년월일"),
+])
+def test_identifiable_dicom_is_rejected_on_upload(kwargs, message):
+    data = make_dicom(**kwargs)
+    with pytest.raises(cases.CaseError, match=message):
+        cases.validate_image(data)
+    assert viewer.to_gray(data).shape == (512, 512)  # 이미 저장된 파일을 볼 때는 막지 않는다
+
+
+def test_deidentified_dicom_passes():
+    dicom.check_deidentified(make_dicom())  # 오류 없음
