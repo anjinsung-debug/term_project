@@ -17,7 +17,7 @@ from google.api_core.exceptions import AlreadyExists
 from google.cloud.firestore_v1.base_query import FieldFilter
 from PIL import Image, UnidentifiedImageError
 
-from pacs import config, firebase_app, quality, viewer
+from pacs import config, dicom, firebase_app, quality, viewer
 from pacs.auth import require_role
 
 
@@ -43,11 +43,34 @@ def data_dir():
 
 
 def validate_image(data):
-    """올린 파일이 지원하는 영상인지 확인하고 {"format", "width", "height", "size_bytes"}를 돌려준다."""
+    """올린 파일이 지원하는 영상인지 확인하고 {"format", "width", "height", "size_bytes", "modality", "pixel_spacing"}를 돌려준다.
+
+    DICOM이면 modality(DX/CR)와 pixel_spacing(mm, 없으면 None)을 채우고, PNG·JPEG는 둘 다 None이다.
+    """
     if not data:
         raise CaseError("파일이 비어 있습니다.")
     if len(data) > config.MAX_UPLOAD_MB * 1024 * 1024:
         raise CaseError(f"파일이 너무 큽니다. {config.MAX_UPLOAD_MB}MB 이하만 올릴 수 있습니다.")
+    if dicom.is_dicom(data):
+        try:
+            _, info = dicom.read(data)  # 끝까지 풀어 봐서 손상된 파일은 여기서 거부한다
+        except ValueError as e:
+            raise CaseError(str(e)) from e
+        fmt, width, height = "dicom", info["width"], info["height"]
+        extra = {"modality": info["modality"], "pixel_spacing": info["pixel_spacing"]}
+    else:
+        fmt, width, height = _read_pil(data)
+        extra = {"modality": None, "pixel_spacing": None}
+    if fmt not in config.SUPPORTED_FORMATS:
+        raise CaseError(f"지원하지 않는 형식입니다({fmt or '알 수 없음'}). PNG, JPEG, DICOM만 올릴 수 있습니다.")
+    if min(width, height) < config.MIN_IMAGE_SIDE:
+        raise CaseError(
+            f"영상이 너무 작습니다({width}×{height}). 가로·세로 모두 {config.MIN_IMAGE_SIDE}픽셀 이상이어야 합니다."
+        )
+    return {"format": fmt, "width": width, "height": height, "size_bytes": len(data), **extra}
+
+
+def _read_pil(data):
     try:
         with Image.open(io.BytesIO(data)) as img:
             img.verify()  # 파일이 깨졌는지 확인
@@ -57,13 +80,7 @@ def validate_image(data):
             img.load()
     except (UnidentifiedImageError, OSError, SyntaxError) as e:
         raise CaseError("영상 파일을 읽을 수 없습니다. 파일이 손상되었거나 영상이 아닙니다.") from e
-    if fmt not in config.SUPPORTED_FORMATS:
-        raise CaseError(f"지원하지 않는 형식입니다({fmt or '알 수 없음'}). PNG 또는 JPEG만 올릴 수 있습니다.")
-    if min(width, height) < config.MIN_IMAGE_SIDE:
-        raise CaseError(
-            f"영상이 너무 작습니다({width}×{height}). 가로·세로 모두 {config.MIN_IMAGE_SIDE}픽셀 이상이어야 합니다."
-        )
-    return {"format": fmt, "width": width, "height": height, "size_bytes": len(data)}
+    return fmt, width, height
 
 
 def register_case(user, mock_id, urgency, image_data):
@@ -146,6 +163,8 @@ def _save_original(case_id, image_id, data, info, user, now):
         "width": info["width"],
         "height": info["height"],
         "size_bytes": info["size_bytes"],
+        "modality": info.get("modality"),
+        "pixel_spacing": info.get("pixel_spacing"),
         "uploaded_by": user["uid"],
         "uploaded_at": now,
         "quality": _quality(data),
