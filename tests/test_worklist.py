@@ -6,6 +6,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
+from pandas.io.formats.style import Styler
+
 import pacs
 
 PAGE = Path(__file__).resolve().parents[1] / 'pages' / 'worklist.py'
@@ -23,8 +26,21 @@ def row(case_id='a', **changes):
     return data
 
 
+def table_records(value):
+    """st.dataframe 한 번에 전달된 표를 행 딕셔너리 목록으로 읽는다."""
+    if isinstance(value, Styler):
+        value = value.data
+    if isinstance(value, pd.DataFrame):
+        return value.to_dict(orient="records")
+    if isinstance(value, list) and all(isinstance(row, dict) for row in value):
+        return value
+    raise AssertionError(f"예상하지 않은 표 자료형 또는 행 구조: {type(value).__name__}")
+
+
 def render(rows, mode='due_at', role='manager', urgency=None, query='', denied=False):
     st = MagicMock()
+    # 각 표에서 품질 열에 실제로 연결한 도움말을 확인할 수 있게 한다.
+    st.column_config.TextColumn.side_effect = lambda label, **kwargs: dict(label=label, **kwargs)
     st.text_input.return_value = query
     st.selectbox.side_effect = [urgency, mode]
     st.tabs.return_value = [MagicMock(), MagicMock()]
@@ -48,7 +64,11 @@ def render(rows, mode='due_at', role='manager', urgency=None, query='', denied=F
             runpy.run_path(str(PAGE))
         except Stopped:
             pass
-    tables = [call.args[0] for call in st.dataframe.call_args_list]
+    # 표 하나당 한 번만 변환한다. 모든 표를 합치거나 행을 한 번 더 감싸지 않는다.
+    tables = [
+        table_records(call.args[0] if call.args else call.kwargs["data"])
+        for call in st.dataframe.call_args_list
+    ]
     return st, cases, tables
 
 
@@ -88,7 +108,9 @@ class WorklistTests(unittest.TestCase):
                 self.assertEqual(tables[0][-1]['접수 시각'], '-')
 
     def test_overdue_and_future(self):
-        _, _, tables = render([row('past'), row('future', registered_at=BASE+timedelta(days=365*100))])
+        now = datetime.now(timezone.utc)
+        _, _, tables = render([row('past', registered_at=now - timedelta(days=2)),
+                               row('future', registered_at=now)])
         self.assertEqual([r['기한 상태'] for r in tables[0]], ['기한 초과', '기한 내'])
 
     def test_seconds_enabled(self):
@@ -114,6 +136,28 @@ class WorklistTests(unittest.TestCase):
         _, _, tables = render([row('bad', status='unknown')])
         self.assertEqual(tables[0][0]['케이스 ID'], 'bad')
         self.assertIn('확인 사유', tables[0][0])
+
+    def test_pending_styles_for_three_urgencies(self):
+        rows = [row('a'), row('b', urgency='emergency'), row('c', urgency='routine')]
+        st, _, tables = render(rows, mode='urgency')
+        styled = st.dataframe.call_args.args[0]
+        self.assertIsInstance(styled, Styler)
+        self.assertEqual([r['긴급도'] for r in tables[0]], ['긴급', '응급', '일반'])
+
+        # pandas가 실제로 생성한 CSS에서 해당 행·긴급도 열에 적용된 배경색 확인.
+        css = styled.to_html().split('</style>', 1)[0].lower()
+        column = styled.data.columns.get_loc('긴급도')
+        for index, color in enumerate(('#fee2e2', '#ffedd5', '#dcfce7')):
+            with self.subTest(color=color):
+                self.assertRegex(css, rf'_row{index}_col{column}\s*\{{[^}}]*background-color:\s*{color}')
+
+    def test_quality_help_on_pending_and_completed_tables(self):
+        st, _, tables = render([row('open'), row('closed', status='done', completed_at=BASE)])
+        self.assertEqual([table[0]['모의 케이스 ID'] for table in tables], ['open', 'closed'])
+        for call in st.dataframe.call_args_list:
+            help_text = call.kwargs['column_config']['품질']['help']
+            self.assertIn('빈칸', help_text)
+            self.assertIn('품질 통과를 보장하지 않습니다', help_text)
 
     def test_permission_denied_stops_before_table(self):
         st, _, tables = render([], denied=True)
