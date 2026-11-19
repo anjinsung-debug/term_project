@@ -279,7 +279,100 @@ img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
 
 ## JCloud 배포와 복구
 
-작성 예정입니다.
+웹 콘솔은 https://jcloud.jedutools.io 입니다 (JEduTools 통합 로그인, 프로젝트 `students`). LMS 11주차 "JCloud 세팅 영상"(2024년 화면)과 메뉴·주소 규칙이 바뀌어, 2026-11-17에 실제로 만들어 보며 확인한 내용으로 적었습니다.
+
+### 접속 주소
+
+인스턴스마다 외부 주소가 따로 정해집니다. 컴퓨팅 → 인스턴스 → 인스턴스 이름 → **세부 정보의 "접속 주소"** 표에서 확인합니다. 내부 IP가 `10.0.0.48`인 경우의 예입니다.
+
+| 인스턴스 안 포트 | 외부 주소 |
+|---|---|
+| 3000 | `s.jedutools.io:40048` ← **앱 주소** |
+| 8080 | `s.jedutools.io:50048` |
+| 7777 (SSH) | `s.jedutools.io:10048` |
+| 80 / 443 | `s.jedutools.io:20048` / `30048` |
+
+Streamlit 기본 포트 8501은 연결되지 않습니다. 그래서 서버에서는 3000 포트로 띄웁니다.
+
+### 1. 인스턴스 만들기 (웹 콘솔, 한 번만)
+
+컴퓨팅 → 인스턴스 → **인스턴스 생성**에서 이름, 운영체제, 사양, 키 페어만 고릅니다. 네트워크와 보안 그룹(`default`)은 자동으로 정해집니다.
+
+| 항목 | 값 |
+|---|---|
+| 인스턴스 이름 | 학번 |
+| 운영체제 | **`ubuntu.24.04.image`** (22.04는 Python 3.10이라 Streamlit 1.67이 설치되지 않습니다) |
+| 사양 | `micro` (2 vCPU, 2GB, 디스크 10GB). 학생이 고를 수 있는 사양은 이것뿐입니다 |
+| 키 페어 | 키 페어 생성 후 받은 개인 키 파일을 안전한 곳에 보관. 저장소·메신저·노션에 올리지 않습니다 |
+
+상태가 "활성"이 되면 세부 정보에서 접속 주소를 확인합니다.
+
+### 2. 접속과 비밀 값 올리기 (내 컴퓨터에서)
+
+```bash
+ssh -i 키.pem -p 10048 ubuntu@s.jedutools.io
+```
+
+서버에서 저장소를 받습니다.
+
+```bash
+git clone https://github.com/anjinsung-debug/term_project.git ~/term_project
+```
+
+내 컴퓨터에서 서비스 계정 키와 설정 파일을 올립니다. 둘 다 저장소에 없는 파일입니다.
+
+```bash
+scp -i 키.pem -P 10048 C:/keys/pacs-firebase.json ubuntu@s.jedutools.io:/home/ubuntu/pacs-firebase.json
+```
+
+```bash
+scp -i 키.pem -P 10048 .streamlit/secrets.toml ubuntu@s.jedutools.io:/home/ubuntu/term_project/.streamlit/secrets.toml
+```
+
+서버의 `secrets.toml`에서 두 줄을 서버 경로로 고칩니다.
+
+```toml
+service_account_file = "/home/ubuntu/pacs-firebase.json"
+data_dir = "/home/ubuntu/pacs-data"
+```
+
+`data_dir`는 저장소 밖 절대 경로로 둡니다. 코드를 다시 받아도 영상 파일이 지워지지 않게 하기 위해서입니다.
+
+### 3. 설치·실행 (서버에서)
+
+```bash
+cd ~/term_project && bash deploy/setup.sh
+```
+
+`deploy/setup.sh`가 하는 일입니다.
+
+- 비밀 값과 `data_dir`(절대 경로인지) 확인
+- `.venv` 만들기, `requirements.txt` 설치
+- `deploy/pacs.service`를 systemd 서비스로 등록하고 다시 시작. SSH를 끊거나 서버를 다시 켜도 앱이 계속 떠 있습니다
+- 응답을 확인하고 외부 주소와 배포한 커밋을 출력
+
+### 갱신 (main에 새 코드가 들어왔을 때)
+
+```bash
+cd ~/term_project && git pull && bash deploy/setup.sh
+```
+
+제출 때는 출력된 "배포 커밋"이 LMS에 적는 최종 커밋 SHA와 같은지 확인합니다.
+
+### 상태 확인과 복구
+
+| 상황 | 할 일 |
+|---|---|
+| 앱이 떠 있는지 | `systemctl status pacs` |
+| 오류 원인 보기 | `journalctl -u pacs -n 50` |
+| 다시 시작 | `sudo systemctl restart pacs` |
+| 서버를 새로 만들어야 할 때 | 1~3단계를 다시 하고, 아래 백업한 영상 폴더를 `data_dir`에 풀기 |
+
+Firestore 기록은 Firebase에 남지만, 영상 파일은 인스턴스 디스크에만 있습니다. 시연 데이터를 등록한 뒤에는 영상 폴더를 내 컴퓨터로 백업해 둡니다.
+
+```bash
+ssh -i 키.pem -p 10048 ubuntu@s.jedutools.io "tar czf - -C /home/ubuntu pacs-data" > pacs-data-backup.tar.gz
+```
 
 ## 협업 규칙
 
