@@ -49,7 +49,7 @@
   - 상태 변경은 `case_events`에 남긴다.
 - 기준값(품질, 불일치 0.5, 목표 시간)은 코드 한 곳에 모아 바꿀 수 있게 한다.
 - 모듈 사이의 약속(알고리즘 `apply(image, **params) -> image`와 `PARAMS`, ROI `{"x","y","w","h"}`)은 README의 "서로 맞춰야 하는 부분"이 기준이다.
-- 미정: 완료 후 재검토 시 검토 기록을 구분하는 방법. (품질 기준값은 2026-11-15 확정, `config.QUALITY_THRESHOLDS`)
+- 재검토 회차 (2026-11-20 결정): 재검토하면 `cases.review_round`를 1 올리고, 지금 회차의 `reviews`·`comparisons`를 `review_rounds/{케이스ID}_{회차}`로 옮긴 뒤 원래 문서를 지운다 (`pacs/workflow.py`, 상태 변경과 같은 트랜잭션). 두 검토자는 새 회차에서 다시 제출한다.
 
 ## 1. 기술 스택 (변경 금지)
 - Python + Streamlit / 인증: Firebase Authentication / DB: Cloud Firestore / 배포: JCloud

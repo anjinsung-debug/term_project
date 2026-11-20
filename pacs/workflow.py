@@ -4,6 +4,8 @@
 - 권한 검사는 전이 함수 안에서 한다 (역할, 담당 범위, 현재 상태, 조건).
 - 상태 변경과 case_events 기록은 Firestore 트랜잭션 하나로 저장한다. 둘 중 하나만 저장되는 일은 없다.
 - 트랜잭션 안에서 현재 상태를 다시 읽으므로, 버튼을 두 번 눌러도 두 번째는 "지금 상태에서는 할 수 없습니다"로 거절된다.
+- 재검토(reopen)는 검토 회차를 하나 올린다. 지금 회차의 검토(reviews)와 판정(comparisons)은 review_rounds에
+  그대로 옮겨 보존하고 원래 문서는 지운다. 그래서 두 검토자가 새 회차에서 처음부터 다시 제출할 수 있다.
 """
 from collections import namedtuple
 from datetime import datetime, timezone
@@ -85,6 +87,9 @@ def plan(user, case, action, *, reason=None, reviewer_uids=None, now=None):
         updates["completed_at"] = None  # 재검토로 다시 열리면 완료 목록에서 빠진다
     if action == "auto_mismatch":
         updates["flags.mismatch"] = True  # 다른 flags 값은 그대로 둔다
+    if action == "reopen":
+        updates["review_round"] = current_round(case) + 1
+        updates["flags.mismatch"] = False  # 새 회차는 판정 전이다
 
     event = {
         "case_id": case["id"],
@@ -117,10 +122,48 @@ def apply(transaction, user, case_id, action, *, reason=None, reviewer_uids=None
             account = db.collection("users").document(uid).get(transaction=transaction).to_dict() or {}
             if account.get("role") != "reviewer":
                 raise TransitionError("검토 담당자 계정만 배정할 수 있습니다.")
+    if action == "reopen":
+        # 트랜잭션은 읽기를 모두 마친 뒤에 써야 하므로 여기서 읽고, 아래에서 옮긴다.
+        archive = _read_round(db, transaction, {"id": case_id, **snap.to_dict()})
 
     transaction.update(case_ref, updates)
+    if action == "reopen":
+        _archive_round(db, transaction, archive, event)
     transaction.set(db.collection("case_events").document(), event)
     return updates["status"]
+
+
+def current_round(case):
+    """케이스의 검토 회차. 재검토 전에 만든 케이스에는 값이 없으므로 1로 본다."""
+    return case.get("review_round") or 1
+
+
+def _read_round(db, transaction, case):
+    from pacs.reviews import review_id  # reviews가 workflow를 불러 쓰므로 여기서 불러온다
+
+    refs = [db.collection("reviews").document(review_id(case["id"], uid)) for uid in case.get("reviewer_uids") or []]
+    refs.append(db.collection("comparisons").document(case["id"]))
+    snaps = [ref.get(transaction=transaction) for ref in refs]
+    return {"case": case, "docs": [(ref, snap.to_dict()) for ref, snap in zip(refs, snaps) if snap.exists]}
+
+
+def _archive_round(db, transaction, archive, event):
+    """지금 회차의 검토·판정을 review_rounds/{케이스ID}_{회차}에 옮기고 원래 문서를 지운다."""
+    case = archive["case"]
+    docs = archive["docs"]
+    round_no = current_round(case)
+    transaction.set(db.collection("review_rounds").document(f"{case['id']}_{round_no}"), {
+        "case_id": case["id"],
+        "round": round_no,
+        "reviewer_uids": case.get("reviewer_uids") or [],
+        "reviews": {d["reviewer_uid"]: d for ref, d in docs if ref.id != case["id"]},
+        "comparison": next((d for ref, d in docs if ref.id == case["id"]), None),
+        "closed_at": event["at"],
+        "closed_by": event["actor_uid"],
+        "reason": event["reason"],
+    })
+    for ref, _ in docs:
+        transaction.delete(ref)
 
 
 def transition(user, case_id, action, *, reason=None, reviewer_uids=None):
@@ -162,6 +205,17 @@ def list_events(user, case_id):
     rows = [{"id": d.id, **d.to_dict()} for d in query.stream()]
     rows.sort(key=lambda r: r.get("at") or datetime.min.replace(tzinfo=timezone.utc))
     return rows
+
+
+def list_rounds(user, case_id):
+    """재검토로 닫힌 이전 검토 회차를 오래된 순으로 돌려준다. 관리 담당과 배정된 검토 담당만.
+
+    이전 회차는 두 검토가 모두 제출된 뒤에 닫히므로 검토 담당이 봐도 블라인드 규칙이 깨지지 않는다.
+    """
+    require_role(user, "reviewer", "manager")
+    get_case(user, case_id)
+    query = firebase_app.db().collection("review_rounds").where(filter=FieldFilter("case_id", "==", case_id))
+    return sorted((d.to_dict() for d in query.stream()), key=lambda r: r["round"])
 
 
 def reviewer_accounts(user):
