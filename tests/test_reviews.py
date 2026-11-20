@@ -355,6 +355,9 @@ def test_manager_confirms_reviewer_a_roi(mismatched):
     assert arb["choice"] == "a" and arb["final_roi"] == ROI_A
     assert arb["reason"] == "A가 병변 위치를 정확히 잡음" and arb["decided_by"] == "man1"
     assert events(mismatched)[-1] == ("arbitrate", "arbitration", "done", "man1")
+    # 상태 변경 이력에도 같은 사유가 남는다 (PR #37 리뷰 반영)
+    last = list(mismatched.store["case_events"].values())[-1]
+    assert last["reason"] == "A가 병변 위치를 정확히 잡음"
 
 
 def test_manager_can_draw_new_roi_or_choose_no_roi(mismatched):

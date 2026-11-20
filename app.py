@@ -37,5 +37,9 @@ if user["role"] == "registrar":
 
 menu.append(st.Page("pages/worklist.py", title="작업 목록"))
 menu.append(st.Page("pages/case_detail.py", title="케이스 상세"))
+if user["role"] == "reviewer":
+    menu.append(st.Page("pages/review.py", title="검토"))
+if user["role"] == "manager":
+    menu.append(st.Page("pages/arbitration.py", title="중재"))
 
 st.navigation(menu).run()
