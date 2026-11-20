@@ -24,6 +24,10 @@ _CHART_CONFIG = {
 _SELECT_CONFIG = {**_CHART_CONFIG, "modeBarButtonsToAdd": ["select2d"]}
 
 
+# Streamlit은 슬라이더를 움직일 때마다 화면 코드를 처음부터 다시 실행한다. 같은 파일을 매번 다시 풀지 않게
+# 결과를 기억해 둔다 (큰 DICOM은 한 번 푸는 데 0.5초 안팎, PR #36 리뷰). 최근 영상 8장까지만 기억한다.
+# 돌려줄 때마다 복사본을 주므로 받은 쪽이 배열을 바꿔도 기억해 둔 값은 그대로다.
+@st.cache_data(max_entries=8, show_spinner=False)
 def to_gray(data):
     """파일 바이트를 흑백 2차원 uint8 배열로 바꾼다. 컬러 영상도 흑백으로 바꿔 다룬다.
 

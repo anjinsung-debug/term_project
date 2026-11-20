@@ -27,6 +27,23 @@ def is_dicom(data):
     return len(data) > 132 and data[128:132] == b"DICM"
 
 
+def check_deidentified(data):
+    """올리는 DICOM이 비식별 처리된 공개 자료인지 확인한다. 아니면 이유를 담은 ValueError.
+
+    우리는 비식별 공개 자료만 쓰기로 했다 (CLAUDE.md 2장). 등록할 때만 부르고, 이미 저장된 파일을 볼 때는 부르지 않는다.
+    - PatientIdentityRemoved가 "YES"여야 한다 (DICOM 표준 비식별 표시. LIDC-IDRI는 모두 YES)
+    - 환자 이름과 생년월일이 비어 있어야 한다
+    """
+    try:
+        ds = pydicom.dcmread(io.BytesIO(data), stop_before_pixels=True)
+    except (InvalidDicomError, EOFError, OSError, ValueError) as e:
+        raise ValueError("DICOM 파일을 읽을 수 없습니다. 파일이 손상되었을 수 있습니다.") from e
+    if str(ds.get("PatientIdentityRemoved", "")).upper() != "YES":
+        raise ValueError("비식별 처리 표시(PatientIdentityRemoved)가 없는 DICOM은 올릴 수 없습니다. 공개 비식별 자료만 사용합니다.")
+    if str(ds.get("PatientName", "")).strip() or str(ds.get("PatientBirthDate", "")).strip():
+        raise ValueError("환자 이름이나 생년월일이 들어 있는 DICOM은 올릴 수 없습니다. 공개 비식별 자료만 사용합니다.")
+
+
 def read(data):
     """DICOM 바이트를 (흑백 uint8 영상, 정보)로 돌려준다. 문제가 있으면 이유를 담은 ValueError.
 

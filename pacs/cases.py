@@ -53,6 +53,7 @@ def validate_image(data):
         raise CaseError(f"파일이 너무 큽니다. {config.MAX_UPLOAD_MB}MB 이하만 올릴 수 있습니다.")
     if dicom.is_dicom(data):
         try:
+            dicom.check_deidentified(data)  # 비식별 공개 자료만 받는다
             _, info = dicom.read(data)  # 끝까지 풀어 봐서 손상된 파일은 여기서 거부한다
         except ValueError as e:
             raise CaseError(str(e)) from e
