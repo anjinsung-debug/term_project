@@ -10,7 +10,16 @@ st.caption(
     "모든 수치는 교육용 결과이며 진단에 사용할 수 없습니다."
 )
 
-user = auth.require_login()
+PAGES = ["register", "worklist", "case_detail", "review", "arbitration"]
+
+user = auth.current_user()
+if user is None:
+    # 로그인 전에도 메뉴를 직접 정해 숨겨 둔다. 정하지 않으면 Streamlit이 pages/ 폴더의 모든 화면을 메뉴로 보여주고,
+    # 로그아웃 직후에는 직전 사용자의 메뉴가 남는다. 화면 주소로 바로 들어오면(새로고침 포함)
+    # 그 화면의 require_login()이 로그인 화면을 보여주고, 로그인하면 그 화면으로 이어진다.
+    login = st.Page(auth.require_login, title="로그인", default=True)
+    st.navigation([login] + [st.Page(f"pages/{p}.py") for p in PAGES], position="hidden").run()
+    st.stop()
 
 with st.sidebar:
     st.write(f"**{user['name']}**")
