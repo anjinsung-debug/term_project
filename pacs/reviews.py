@@ -231,7 +231,8 @@ def arbitrate_in(transaction, user, case_id, choice, reason, custom_roi=None):
         final_roi = {"a": comp.get("roi_a"), "b": comp.get("roi_b"), "none": None}[choice]
 
     # 2) 상태 변경 (중재 중 → 완료). 상태 검사는 workflow가 한다.
-    new_status = workflow.apply(transaction, user, case_id, "arbitrate")
+    # 사유를 함께 넘겨 케이스 상세의 "상태 변경 이력"에도 중재 사유가 남게 한다.
+    new_status = workflow.apply(transaction, user, case_id, "arbitrate", reason=reason)
 
     # 3) 쓰기
     transaction.update(db.collection("comparisons").document(case_id), {
