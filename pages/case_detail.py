@@ -1,7 +1,7 @@
 """케이스 상세 화면 (모든 역할). 볼 수 있는 케이스의 정보와 영상을 보여준다."""
 import streamlit as st
 
-from pacs import algorithms, auth, cases, config, notes, processing, reviews, viewer, workflow
+from pacs import algorithms, auth, cases, config, notes, processing, reviews, roi as roi_mod, viewer, workflow
 
 user = auth.require_login()
 st.header("케이스 상세")
@@ -52,19 +52,21 @@ elif quality:
 # 버튼은 allowed_actions로 고르지만, 실제 검사는 workflow.transition이 데이터 접근 단계에서 다시 한다.
 reviewer_uids = case.get("reviewer_uids") or []
 names = workflow.display_names(user, reviewer_uids)
-st.caption("검토 담당자: " + (", ".join(names[u] for u in reviewer_uids) if reviewer_uids else "배정 전"))
+st.caption(
+    "검토 담당자: " + (", ".join(names[u] for u in reviewer_uids) if reviewer_uids else "배정 전")
+    + (f" · 검토 {workflow.current_round(case)}회차" if workflow.current_round(case) > 1 else "")
+)
 
 ACTION_HELP = {
     "assign": "서로 다른 검토 담당자 2명을 고릅니다.",
     "start_review": "검토를 시작하면 영상처리 결과를 저장할 수 있습니다. 두 검토자 중 한 명만 누르면 됩니다.",
     "request_revision": "영상이나 정보 보완이 필요하면 사유를 적어 등록 담당자에게 돌려보냅니다.",
     "revision_done": "케이스 등록 화면에서 영상을 다시 올렸거나 보완을 마쳤으면 누릅니다.",
-    "reopen": "완료된 케이스를 다시 검토합니다. 사유가 변경 이력에 남습니다.",
+    "reopen": "완료된 케이스를 다시 검토합니다. 지금 회차의 검토·판정은 '이전 검토 회차'에 그대로 남고, "
+    "두 검토자가 새 회차에서 다시 제출합니다. 사유가 변경 이력에 남습니다.",
 }
 # 중재 확정은 두 검토 결과를 비교한 의견과 함께 저장해야 해서 중재 화면에서 한다.
-# 재검토는 버튼을 숨겨 둔다. 지금 구조는 케이스당 검토 한 번만 가정해서, 재검토하면 이미 제출된 검토를
-# 다시 낼 수 없어 케이스가 "검토 중"에 멈춘다. 재검토 기록을 구분하는 방법을 정하면 다시 연다 (CLAUDE.md "미정").
-actions = [a for a in workflow.allowed_actions(user, case) if a not in ("arbitrate", "reopen")]
+actions = [a for a in workflow.allowed_actions(user, case) if a != "arbitrate"]
 if actions:
     with st.container(border=True):
         st.markdown("**업무 진행**")
@@ -92,8 +94,6 @@ if case["status"] == "arbitration" and user["role"] == "manager":
     st.info("두 검토자의 ROI가 어긋나 중재 중입니다. 중재 화면에서 두 결과를 비교하고 확정합니다.")
 if case["status"] == "revision_requested" and user["role"] == "registrar":
     st.info("보완 요청을 받았습니다. 케이스 등록 화면에서 영상을 다시 올린 뒤 '보완 완료'를 눌러 주세요.")
-if case["status"] == "done" and user["role"] == "manager":
-    st.caption("재검토는 재검토 기록을 구분하는 방법이 정해질 때까지 막아 두었습니다. 의견은 아래 메모로 남겨 주세요.")
 
 with st.expander("상태 변경 이력"):
     events = workflow.list_events(user, case_id)
@@ -111,6 +111,34 @@ with st.expander("상태 변경 이력"):
         ],
         hide_index=True,
     )
+
+# --- 이전 검토 회차 (재검토로 닫힌 회차의 검토·판정, workflow.list_rounds) ---
+if user["role"] != "registrar" and workflow.current_round(case) > 1:
+    with st.expander(f"이전 검토 회차 ({workflow.current_round(case) - 1}회)"):
+        rounds = workflow.list_rounds(user, case_id)
+        people = workflow.display_names(
+            user, [u for r in rounds for u in r["reviewer_uids"]] + [r.get("closed_by") for r in rounds]
+        )
+        for r in rounds:
+            comp = r.get("comparison") or {}
+            arb = comp.get("arbitration") or {}
+            st.markdown(
+                f"**{r['round']}회차** · 판정 {config.LABELS.get(comp.get('verdict'), '-')}"
+                + (f" (겹침 비율 {comp['iou']:.2f})" if comp.get("iou") is not None else "")
+                + (f" · 중재 {notes.CHOICE_LABELS.get(arb['choice'], arb['choice'])}" if arb.get("choice") else "")
+            )
+            st.caption(
+                f"{cases.format_kst(r.get('closed_at'))}에 {people.get(r.get('closed_by'), '-')}이(가) 재검토로 닫음 · "
+                f"사유: {r.get('reason') or '-'}"
+            )
+            for uid in r["reviewer_uids"]:
+                rv = (r.get("reviews") or {}).get(uid) or {}
+                box = rv.get("roi")
+                st.caption(
+                    f"- {people.get(uid, uid)}: "
+                    + (f"ROI x={box['x']}, y={box['y']}, {box['w']}×{box['h']}" if box else "ROI 없음")
+                    + f" · 메모: {rv.get('memo') or '없음'}"
+                )
 
 # --- 메모·리포트 (pacs/notes.py). 검토 메모는 검토 화면에서 쓴다 (reviews.memo). ---
 with st.expander("메모 · 리포트", expanded=True):
@@ -189,6 +217,11 @@ view_tab, compare_tab, history_tab = st.tabs(["영상 보기 · ROI 선택", "�
 
 with view_tab:
     roi = viewer.show(gray, key=f"view_{case_id}", select_roi=True)
+    try:
+        roi = roi_mod.validate_roi(roi, gray.shape[1], gray.shape[0])
+    except roi_mod.RoiError as e:
+        st.warning(f"{e} 이 ROI는 통계와 저장에 쓰지 않습니다.")
+        roi = None
     if roi:
         st.write(f"선택한 ROI: x={roi['x']}, y={roi['y']}, 가로 {roi['w']}, 세로 {roi['h']} (원본 픽셀 좌표)")
 
@@ -257,7 +290,11 @@ with history_tab:
         )
         if st.toggle("결과 보기", key=f"show_{log['id']}"):
             result = processing.load_result(user, log["id"])
-            if result["bytes"] is None:
-                st.warning("이 컴퓨터에 결과 파일이 없습니다.")
+            # 영상을 다시 올렸으면 지금 검토 대상과 이 결과의 원본이 다르다. 결과를 만든 원본과 비교한다.
+            source = image if log["image_id"] == image["id"] else cases.load_image(user, log["image_id"])
+            if result["bytes"] is None or source["bytes"] is None:
+                st.warning("이 컴퓨터에 결과 파일이나 그 원본 파일이 없습니다.")
             else:
-                viewer.compare(gray, viewer.to_gray(result["bytes"]), key=f"hist_{log['id']}")
+                if source is not image:
+                    st.caption("다시 올리기 전의 영상으로 만든 결과입니다. 그 원본과 비교합니다.")
+                viewer.compare(viewer.to_gray(source["bytes"]), viewer.to_gray(result["bytes"]), key=f"hist_{log['id']}")

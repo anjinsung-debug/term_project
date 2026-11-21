@@ -62,9 +62,15 @@ class Transaction:
     def set(self, ref, data):
         self.ops.append(("set", ref, data))
 
+    def delete(self, ref):
+        self.ops.append(("delete", ref, None))
+
     def commit(self):
         for kind, ref, data in self.ops:
             docs = self.store[ref.name]
+            if kind == "delete":
+                docs.pop(ref.id, None)
+                continue
             if kind == "set":
                 docs[ref.id] = dict(data)
                 continue
@@ -81,6 +87,7 @@ class FakeDb:
     def __init__(self):
         self.store = {
             "cases": {}, "case_events": {}, "_ids": itertools.count(1),
+            "reviews": {}, "comparisons": {}, "review_rounds": {},
             "users": {
                 "revA": {"role": "reviewer", "display_name": "검토자 A"}, "revB": {"role": "reviewer", "email": "b@pacs.test"},
                 "revC": {"role": "reviewer", "display_name": "검토자 C"}, "man1": {"role": "manager", "display_name": "관리자"},
@@ -142,6 +149,8 @@ def test_full_flow_records_every_change(db):
     assert case(db)["completed_at"] is not None
     assert run(db, MANAGER, "reopen", reason="ROI 위치 재확인") == "in_review"
     assert case(db)["completed_at"] is None
+    assert case(db)["review_round"] == 2
+    assert case(db)["flags"] == {"quality_check": True, "mismatch": False}  # 새 회차는 판정 전
     assert run(db, workflow.SYSTEM, "auto_match") == "done"
 
     assert events(db) == [
@@ -154,6 +163,39 @@ def test_full_flow_records_every_change(db):
     ]
     reopen = list(db.store["case_events"].values())[4]
     assert reopen["case_id"] == "c1" and reopen["reason"] == "ROI 위치 재확인"
+
+
+def test_reopen_moves_round_to_history_so_reviewers_can_submit_again(db):
+    case(db).update(status="done", reviewer_uids=["revA", "revB"])
+    reviews = {
+        "c1_revA": {"case_id": "c1", "reviewer_uid": "revA", "roi": None, "submitted": True},
+        "c1_revB": {"case_id": "c1", "reviewer_uid": "revB", "roi": {"x": 1, "y": 1, "w": 40, "h": 40}, "submitted": True},
+    }
+    db.store["reviews"].update(reviews)
+    db.store["comparisons"]["c1"] = {"verdict": "mismatch", "arbitration": {"choice": "b"}}
+
+    run(db, MANAGER, "reopen", reason="2회차 확인")
+    assert db.store["reviews"] == {} and db.store["comparisons"] == {}  # 새 회차는 빈 상태에서 시작
+    past = db.store["review_rounds"]["c1_1"]
+    assert past["round"] == 1 and past["reviewer_uids"] == ["revA", "revB"]
+    assert past["reviews"] == {"revA": reviews["c1_revA"], "revB": reviews["c1_revB"]}  # 그대로 보존
+    assert past["comparison"]["arbitration"] == {"choice": "b"}
+    assert (past["closed_by"], past["reason"]) == ("man1", "2회차 확인")
+
+    # 2회차도 끝나고 다시 열면 3회차가 되고, 1회차 기록은 그대로 남는다
+    db.store["reviews"]["c1_revA"] = {"case_id": "c1", "reviewer_uid": "revA", "submitted": True}
+    run(db, workflow.SYSTEM, "auto_match")
+    run(db, MANAGER, "reopen", reason="3회차")
+    assert case(db)["review_round"] == 3
+    assert set(db.store["review_rounds"]) == {"c1_1", "c1_2"}
+    assert db.store["review_rounds"]["c1_2"]["comparison"] is None
+
+    assert [r["round"] for r in workflow.list_rounds(MANAGER, "c1")] == [1, 2]
+    assert len(workflow.list_rounds(REV_A, "c1")) == 2
+    with pytest.raises(PermissionError):
+        workflow.list_rounds(REGISTRAR, "c1")
+    with pytest.raises(CaseError):
+        workflow.list_rounds(REV_OTHER, "c1")
 
 
 def test_revision_round_trip(db):

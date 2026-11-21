@@ -163,6 +163,14 @@ def test_reviewer_cannot_see_other_reviewer_notes_before_both_submitted(db):
     assert len(bodies(REV_A)) == len(bodies(REV_B)) == 4
 
 
+def test_after_reopen_old_round_notes_stay_visible_but_new_ones_are_blind(db):
+    notes.add(REV_B, "c1", "1회차 B 메모")
+    db.case["review_round"] = 2  # 재검토로 판정 기록은 review_rounds로 옮겨졌다
+    notes.add(REV_B, "c1", "2회차 B 메모")
+    assert bodies(REV_A) == ["1회차 B 메모"]
+    assert set(bodies(REV_B)) == {"1회차 B 메모", "2회차 B 메모"}
+
+
 def test_list_is_oldest_first_and_checks_case_access(db):
     for i, body in enumerate(["둘째", "첫째"]):
         note_id, _ = notes.add(MANAGER, "c1", body)

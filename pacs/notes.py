@@ -3,7 +3,7 @@
 - 검토 메모는 여기가 아니라 reviews.memo에 둔다. notes는 일반 메모(memo)와 리포트(report)에만 쓴다.
 - 메모는 케이스를 볼 수 있는 사람 누구나 쓴다. 리포트는 관리 담당자가 완료된 케이스에만 쓴다.
 - 블라인드 규칙: 검토 담당은 두 검토가 모두 제출되기 전(comparisons 문서가 생기기 전)에는
-  다른 검토자의 메모를 볼 수 없다. 등록·관리 담당의 메모는 언제든 보인다.
+  다른 검토자의 메모를 볼 수 없다. 등록·관리 담당의 메모와 재검토 전 회차의 메모는 언제든 보인다.
 - 고칠 수 있는 사람은 쓴 사람뿐이고, 고치기 전 내용은 edit_history에 남는다.
 """
 import hashlib
@@ -14,6 +14,7 @@ from google.api_core.exceptions import AlreadyExists
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from pacs import config, firebase_app
+from pacs.workflow import current_round
 from pacs.auth import require_role
 from pacs.cases import CaseError, format_kst, get_case
 
@@ -55,6 +56,7 @@ def add(user, case_id, body, note_type="memo"):
         "type": note_type,
         "body": body,
         "author_uid": user["uid"],
+        "round": current_round(case),  # 쓴 때의 검토 회차 (재검토 뒤 블라인드 판단에 씀)
         "created_at": datetime.now(timezone.utc),
         "edited_at": None,
         "edit_history": [],
@@ -91,6 +93,8 @@ def _visible(user, case, note, compared=None):
         return True
     if note["author_uid"] not in (case.get("reviewer_uids") or []):
         return True  # 등록·관리 담당의 메모
+    if (note.get("round") or 1) < current_round(case):
+        return True  # 이전 회차의 메모. 그 회차는 두 검토가 모두 제출된 뒤 닫혔다
     if compared is None:
         compared = _compared(case["id"])
     return compared
