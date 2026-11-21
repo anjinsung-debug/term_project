@@ -19,6 +19,8 @@ STATUSES = (
 ALGORITHMS = ("clahe", "median", "canny")
 VERDICTS = ("match", "mismatch")
 EXAM_TYPES = ("chest_xray",)
+NOTE_TYPES = ("memo", "report")  # notes.type: 일반 메모, 리포트 (pacs/notes.py)
+NOTE_MAX_LENGTH = 2000
 
 # 화면에는 한글로 보여준다.
 LABELS = {
@@ -51,6 +53,8 @@ LABELS = {
     "revision_done": "보완 완료",
     "reopen": "재검토",
     "system": "시스템",
+    "memo": "메모",
+    "report": "리포트",
 }
 
 # --- 업로드 (노션 1장, 6-1) ---

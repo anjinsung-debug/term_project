@@ -22,6 +22,7 @@
 | `scripts/create_user.py` | 테스트 계정 만들기와 역할 지정 |
 | `pacs/cases.py` | 케이스와 영상의 등록·조회·검색 (권한 검사 포함) |
 | `pacs/workflow.py` | 상태 전이 표와 전이 실행, 변경 기록 |
+| `pacs/notes.py` | 케이스 메모와 리포트 (작성·고치기·고친 기록, 검토자 사이 블라인드) |
 | `pacs/processing.py` | 알고리즘 실행과 처리 이력 저장 |
 | `pacs/viewer.py` | 뷰어 (확대·이동·초기화, 원본과 결과 비교, ROI 선택) |
 | `pacs/dicom.py` | DICOM 흉부 X-ray 읽기와 8비트 변환 |

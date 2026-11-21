@@ -1,7 +1,7 @@
 """케이스 상세 화면 (모든 역할). 볼 수 있는 케이스의 정보와 영상을 보여준다."""
 import streamlit as st
 
-from pacs import algorithms, auth, cases, config, processing, viewer, workflow
+from pacs import algorithms, auth, cases, config, notes, processing, reviews, viewer, workflow
 
 user = auth.require_login()
 st.header("케이스 상세")
@@ -62,7 +62,9 @@ ACTION_HELP = {
     "reopen": "완료된 케이스를 다시 검토합니다. 사유가 변경 이력에 남습니다.",
 }
 # 중재 확정은 두 검토 결과를 비교한 의견과 함께 저장해야 해서 중재 화면에서 한다.
-actions = [a for a in workflow.allowed_actions(user, case) if a != "arbitrate"]
+# 재검토는 버튼을 숨겨 둔다. 지금 구조는 케이스당 검토 한 번만 가정해서, 재검토하면 이미 제출된 검토를
+# 다시 낼 수 없어 케이스가 "검토 중"에 멈춘다. 재검토 기록을 구분하는 방법을 정하면 다시 연다 (CLAUDE.md "미정").
+actions = [a for a in workflow.allowed_actions(user, case) if a not in ("arbitrate", "reopen")]
 if actions:
     with st.container(border=True):
         st.markdown("**업무 진행**")
@@ -90,6 +92,8 @@ if case["status"] == "arbitration" and user["role"] == "manager":
     st.info("두 검토자의 ROI가 어긋나 중재 중입니다. 중재 화면에서 두 결과를 비교하고 확정합니다.")
 if case["status"] == "revision_requested" and user["role"] == "registrar":
     st.info("보완 요청을 받았습니다. 케이스 등록 화면에서 영상을 다시 올린 뒤 '보완 완료'를 눌러 주세요.")
+if case["status"] == "done" and user["role"] == "manager":
+    st.caption("재검토는 재검토 기록을 구분하는 방법이 정해질 때까지 막아 두었습니다. 의견은 아래 메모로 남겨 주세요.")
 
 with st.expander("상태 변경 이력"):
     events = workflow.list_events(user, case_id)
@@ -107,6 +111,67 @@ with st.expander("상태 변경 이력"):
         ],
         hide_index=True,
     )
+
+# --- 메모·리포트 (pacs/notes.py). 검토 메모는 검토 화면에서 쓴다 (reviews.memo). ---
+with st.expander("메모 · 리포트", expanded=True):
+    try:
+        note_rows = notes.list_notes(user, case_id)
+    except cases.CaseError as e:
+        st.error(str(e))
+        note_rows = []
+    authors = workflow.display_names(user, [n["author_uid"] for n in note_rows])
+    if user["role"] == "reviewer":
+        st.caption("다른 검토자의 메모는 두 사람 모두 검토를 제출한 뒤에 보입니다.")
+    if not note_rows:
+        st.info("아직 메모가 없습니다.")
+    for n in note_rows:
+        with st.container(border=True):
+            st.caption(
+                f"**{config.LABELS[n['type']]}** · {authors.get(n['author_uid'], '-')} · "
+                f"{cases.format_kst(n.get('created_at'))}"
+                + (f" · 고친 시각 {cases.format_kst(n['edited_at'])}" if n.get("edited_at") else "")
+            )
+            st.text(n["body"])
+            c1, c2 = st.columns(2)
+            if n.get("edit_history"):
+                with c1.popover(f"고치기 전 내용 {len(n['edit_history'])}건"):
+                    for h in reversed(n["edit_history"]):
+                        st.caption(f"{cases.format_kst(h.get('edited_at'))}까지")
+                        st.text(h["body"])
+            if n["author_uid"] == user["uid"]:
+                with c2.popover("고치기"), st.form(f"edit_{n['id']}"):
+                    body = st.text_area("내용", value=n["body"], max_chars=config.NOTE_MAX_LENGTH)
+                    if st.form_submit_button("저장"):
+                        try:
+                            changed = notes.edit(user, n["id"], body)
+                        except (notes.NoteError, cases.CaseError, PermissionError) as e:
+                            st.error(str(e))
+                        else:
+                            st.toast("고쳤습니다. 이전 내용은 기록에 남습니다." if changed else "바뀐 내용이 없습니다.")
+                            st.rerun()
+
+    forms = [("memo", "", "메모 남기기")]
+    if user["role"] == "manager" and case["status"] == "done":
+        # 리포트 초안: 판정·중재 결과와 처리 이력(알고리즘·설정값·실행자·시간)을 채워 두고 관리 담당이 고친다.
+        comparison = reviews.get_comparison(user, case_id)
+        logs = [log for log in processing.list_logs(user, case_id) if log["status"] == "saved"]
+        uids = [log.get("executed_by") for log in logs] + [((comparison or {}).get("arbitration") or {}).get("decided_by")]
+        draft = notes.report_draft(case, comparison, logs, workflow.display_names(user, uids))
+        forms.append(("report", draft, "리포트 저장"))
+    for note_type, value, button in forms:
+        with st.form(f"new_{note_type}_{case_id}", clear_on_submit=True):
+            body = st.text_area(
+                f"새 {config.LABELS[note_type]}", value=value, max_chars=config.NOTE_MAX_LENGTH,
+                height=200 if note_type == "report" else None,
+            )
+            if st.form_submit_button(button):
+                try:
+                    _, created = notes.add(user, case_id, body, note_type)
+                except (notes.NoteError, cases.CaseError, PermissionError) as e:
+                    st.error(str(e))
+                else:
+                    st.toast("저장했습니다." if created else "같은 내용이 이미 저장돼 있습니다.")
+                    st.rerun()
 
 if image["bytes"] is None:
     st.warning(
