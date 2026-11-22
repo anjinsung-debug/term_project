@@ -180,13 +180,16 @@ st.caption(
      else "한 명 이상이 'ROI 없음'으로 제출해 겹침 비율을 계산하지 않았습니다.")
     + f" · 나는 검토자 {me_label.get(user['uid'], '-')}"
 )
-rois = [
-    (comparison.get("roi_a"), f"A · {names.get(a_uid, a_uid)}", "red"),
-    (comparison.get("roi_b"), f"B · {names.get(b_uid, b_uid)}", "blue"),
-]
 arbitration = comparison.get("arbitration")
-if arbitration and arbitration.get("final_roi"):
-    rois.append((arbitration["final_roi"], "최종", "lime"))
+final_choice = (arbitration or {}).get("choice")
+# 중재에서 A나 B의 ROI를 그대로 고르면 최종 ROI가 같은 자리에 겹쳐 원래 색을 덮는다.
+# 그래서 이때는 따로 그리지 않고 그 검토자 이름 옆에 "= 최종"을 붙인다. 새로 그린 ROI만 연두색으로 따로 그린다.
+rois = [
+    (comparison.get("roi_a"), f"A · {names.get(a_uid, a_uid)}" + (" = 최종" if final_choice == "a" else ""), "red"),
+    (comparison.get("roi_b"), f"B · {names.get(b_uid, b_uid)}" + (" = 최종" if final_choice == "b" else ""), "blue"),
+]
+if final_choice == "custom" and arbitration.get("final_roi"):
+    rois.append((arbitration["final_roi"], "최종 (관리 담당이 새로 그림)", "lime"))
 viewer.show(gray, key=f"result_{case_id}", rois=[r for r in rois if r[0]])
 
 try:
