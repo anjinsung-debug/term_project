@@ -20,6 +20,7 @@
 | `pacs/firebase_app.py` | Firebase 연결 (Firestore 클라이언트, 웹 API 키) |
 | `pacs/auth.py` | 로그인, 로그아웃, 역할 확인, 권한 검사(`require_role`) |
 | `scripts/create_user.py` | 테스트 계정 만들기와 역할 지정 |
+| `scripts/verify_scenarios.py` | 기능과 예외 상황 검증 시나리오 (실제 Firestore로 실행) |
 | `pacs/cases.py` | 케이스와 영상의 등록·조회·검색 (권한 검사 포함) |
 | `pacs/workflow.py` | 상태 전이 표와 전이 실행, 변경 기록 |
 | `pacs/notes.py` | 케이스 메모와 리포트 (작성·고치기·고친 기록, 검토자 사이 블라인드) |
@@ -145,6 +146,21 @@ streamlit run app.py
 ```bash
 pytest
 ```
+
+### 검증 시나리오 (실제 Firestore)
+
+pytest는 가짜 Firestore로 함수 하나씩 확인한다. `scripts/verify_scenarios.py`는 실제 Firestore와 영상 저장 폴더로
+등록 → 배정 → 처리 → 두 검토 제출 → 자동 판정 → 리포트 → 다시 조회를 끝까지 진행하면서,
+권한 없는 요청·잘못된 파일과 ROI·설정값·허용 안 되는 상태 변경·연속 클릭이 데이터 접근 단계에서 거절되는지 확인한다 (안내문 09장).
+
+```bash
+python scripts/verify_scenarios.py <정상 흉부 X-ray PNG 경로>
+```
+
+- 역할별 테스트 계정(등록 1, 관리 1, 검토 2)이 있어야 한다. 계정은 `users` 컬렉션에서 역할로 찾는다.
+- 결과는 노션 "검증 결과" 페이지에 옮길 수 있는 표로 나오고, 하나라도 실패하면 종료 코드가 1이다.
+- 실행할 때마다 `VERIFY-월일-시분초` 모의 케이스가 하나 생겨 완료 상태로 남는다.
+- 배포 서버에서는 `cd ~/term_project && .venv/bin/python scripts/verify_scenarios.py <PNG>`로 실행한다. 최종 제출 전에 배포 버전으로 한 번 더 돌린다.
 
 ## Firebase 설정
 
