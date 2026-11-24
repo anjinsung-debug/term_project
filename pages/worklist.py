@@ -1,4 +1,4 @@
-""" 권한별 작업 목록, 선택 정렬, 완료 목록.
+""" 권한별 작업 목록, 선택 정렬(기한, 접수 시각, 긴급도), 완료 목록
 
 필수 연결: 최신 priority.py와 cases.format_kst(dt, *, with_seconds=False).
 """
@@ -48,7 +48,8 @@ except Exception:
     st.error("작업 목록을 불러오지 못했습니다. 잠시 후 다시 조회해 주세요.")
     st.stop()
 
-# [수정 1] 화면 전체에서 같은 now 사용. 유효한 시각만 초 단위로 표시한다.
+# 화면 전체에서 같은 now 사용한다. 
+# 기한 계산과 표시 모두 UTC 기준으로 한다. KST로 변환은 화면 표시용이다.
 now = datetime.now(timezone.utc)
 
 
@@ -65,7 +66,7 @@ st.caption(
 
 
 def base_row(case):
-    # 모의 ID를 화면의 주 식별자로 사용하고, 점검 필요만 표시
+    # 모의 ID를 화면의 주 식별자로 사용하고, 점검 필요만 표시한다.
     flags = case.get("flags") or {}
     return {
         "모의 케이스 ID": case.get("mock_id") or "-",
@@ -99,7 +100,7 @@ for case in rows:
     else:
         valid_pending.append(case)
 
-# [수정 4] form 밖에서 정렬을 선택하고 pending을 반드시 생성한다.
+# form 밖에서 정렬을 선택하고 pending을 반드시 생성한다.
 sort_labels = {
     "due_at": "기한순",
     "registered_at": "접수 시각순",
@@ -115,7 +116,7 @@ sort_by = st.selectbox(
 pending = priority.sort_pending_cases(valid_pending, sort_by=sort_by)
 completed = priority.sort_completed_cases(valid_done)
 
-# [수정 5] 선택한 정렬 기준에 따라 안내 문구와 열 순서를 바꾼다.
+# 선택한 정렬 기준에 따라 안내 문구와 열 순서를 바꾼다.
 sort_descriptions = {
     "due_at": "기한이 이른 순 · 같은 기한이면 접수 시각 → 문서 ID순",
     "registered_at": "접수 시각이 이른 순 · 같은 접수 시각이면 기한 → 문서 ID순",
@@ -129,11 +130,10 @@ column_orders = {
 # 기한 초과·업무 상태도 확인할 수 있게 두고, 품질은 마지막에 표시한다.
 pending_columns = column_orders[sort_by] + ["기한 상태", "상태", "품질"]
 
-pending_tab, completed_tab = st.tabs([
-    f"미완료 ({len(pending)})", f"완료 ({len(completed)})",
-])
+pending_tab = st.container() 
 
 with pending_tab:
+    st.markdown(f"진행 중인 케이스 ({len(pending)})") 
     st.caption(sort_descriptions[sort_by])
     if not pending:
         st.info("조회 조건에 맞는 미완료 케이스가 없습니다.")
@@ -142,7 +142,7 @@ with pending_tab:
         has_unknown_deadline = False
         for case in pending:
             due_at = priority.calculate_due_at(case)
-            # [수정 6] None을 먼저 검사하여 '기한 내'로 오표시하지 않는다.
+            # None을 먼저 검사하여 '기한 내'로 오표시하지 않는다.
             if due_at is None:
                 deadline_status = "기한 계산 불가"
                 has_unknown_deadline = True
@@ -173,12 +173,16 @@ with pending_tab:
         if has_unknown_deadline:
             st.warning("기한 계산 불가 항목은 마지막에 표시했습니다. 접수 시각과 긴급도를 확인해 주세요.")
 
-with completed_tab:
+
+with st.expander(
+    f":blue[완료 케이스 보기 ({len(completed)})]",
+    expanded=False,
+):
     st.caption("완료 시각 최신순 · 같은 완료 시각이면 문서 ID순 · 시각 확인 불가 항목은 마지막")
     if not completed:
         st.info("조회 조건에 맞는 완료 케이스가 없습니다.")
     else:
-        # [수정 7] None뿐 아니라 문자열·시간대 없는 완료 시각도 안전하게 표시한다.
+        # None뿐 아니라 문자열·시간대 없는 완료 시각도 안전하게 표시한다.
         display = []
         for case in completed:
             row = base_row(case)

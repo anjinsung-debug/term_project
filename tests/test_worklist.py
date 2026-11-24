@@ -43,7 +43,6 @@ def render(rows, mode='due_at', role='manager', urgency=None, query='', denied=F
     st.column_config.TextColumn.side_effect = lambda label, **kwargs: dict(label=label, **kwargs)
     st.text_input.return_value = query
     st.selectbox.side_effect = [urgency, mode]
-    st.tabs.return_value = [MagicMock(), MagicMock()]
     st.stop.side_effect = Stopped
     user = dict(uid='test-user', role=role)
     auth = types.ModuleType('pacs.auth')
@@ -82,8 +81,32 @@ class WorklistTests(unittest.TestCase):
 
     def test_empty_lists(self):
         st, _, tables = render([])
+
         self.assertEqual(tables, [])
-        st.tabs.assert_called_once_with(['미완료 (0)', '완료 (0)'])
+        st.container.assert_called_once_with()
+        st.markdown.assert_any_call("진행 중인 케이스 (0)")
+        st.expander.assert_called_once_with(
+            ":blue[완료 케이스 보기 (0)]",
+            expanded=False,
+        )
+        st.info.assert_any_call("조회 조건에 맞는 미완료 케이스가 없습니다.")
+        st.info.assert_any_call("조회 조건에 맞는 완료 케이스가 없습니다.")
+
+    def test_completed_expander_label_and_count(self):
+        st, _, tables = render([
+            row("open"),
+            row("closed", status="done", completed_at=BASE),
+        ])
+
+        st.markdown.assert_any_call("진행 중인 케이스 (1)")
+        st.expander.assert_called_once_with(
+            ":blue[완료 케이스 보기 (1)]",
+            expanded=False,
+        )
+        self.assertEqual(
+            [table[0]["모의 케이스 ID"] for table in tables],
+            ["open", "closed"],
+        )
 
     def test_selected_sort_and_column_order(self):
         data = [row('new'), row('old', urgency='routine', registered_at=BASE-timedelta(hours=24))]
