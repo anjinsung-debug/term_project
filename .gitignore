@@ -7,6 +7,9 @@
 # 로컬에 저장되는 영상 파일
 data/
 
+# 실험 결과 (scripts/experiment_review.py)
+results/
+
 # 파이썬
 .venv/
 __pycache__/
