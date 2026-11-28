@@ -58,5 +58,5 @@ def reference_info(image, roi_a, roi_b):
     a, b = info(roi_a), info(roi_b)
     diff = None
     if a and b:
-        diff = {k: round(b[k] - a[k], 4) for k in ("mean", "std", "edge_ratio")}
+        diff = {k: round(b[k] - a[k], 6) for k in ("mean", "std", "edge_ratio")}
     return {"a": a, "b": b, "diff": diff}

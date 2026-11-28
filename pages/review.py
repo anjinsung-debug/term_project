@@ -186,7 +186,7 @@ final_choice = (arbitration or {}).get("choice")
 # 그래서 이때는 따로 그리지 않고 그 검토자 이름 옆에 "= 최종"을 붙인다. 새로 그린 ROI만 연두색으로 따로 그린다.
 rois = [
     (comparison.get("roi_a"), f"A · {names.get(a_uid, a_uid)}" + (" = 최종" if final_choice == "a" else ""), "red"),
-    (comparison.get("roi_b"), f"B · {names.get(b_uid, b_uid)}" + (" = 최종" if final_choice == "b" else ""), "blue"),
+    (comparison.get("roi_b"), f"B · {names.get(b_uid, b_uid)}" + (" = 최종" if final_choice == "b" else ""), "#4da3ff")  # 어두운 배경에서도 보이는 밝은 파랑,
 ]
 if final_choice == "custom" and arbitration.get("final_roi"):
     rois.append((arbitration["final_roi"], "최종 (관리 담당이 새로 그림)", "lime"))

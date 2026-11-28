@@ -63,4 +63,4 @@ def edge_ratio(edges):
     """경계 영상(apply의 결과)에서 경계 픽셀이 차지하는 비율 (0.0~1.0)."""
     if edges.size == 0:
         return 0.0
-    return round(float(np.count_nonzero(edges)) / edges.size, 4)
+    return round(float(np.count_nonzero(edges)) / edges.size, 6)  # 흉부 X-ray는 경계가 0.1% 안팎이라 소수 6자리까지 남긴다
