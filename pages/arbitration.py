@@ -15,6 +15,11 @@ if user["role"] != "manager":
 
 ERRORS = (reviews.ReviewError, workflow.TransitionError, cases.CaseError, PermissionError)
 
+# 확정하면 케이스가 목록에서 빠져 화면이 바로 바뀐다. 알림(toast)은 금방 사라지므로 결과를 한 번 더 남겨 보여준다.
+done = st.session_state.pop("arbitration_done", None)
+if done:
+    st.success(done)
+
 rows = cases.list_cases(user, status="arbitration")
 if not rows:
     st.info("중재할 케이스가 없습니다. 두 검토자의 ROI가 어긋난 케이스가 여기에 나타납니다.")
@@ -67,7 +72,7 @@ except ValueError as e:
 # 두 ROI를 색을 달리해 겹쳐 그린다. 새 ROI가 필요하면 이 영상 위에 그린다.
 drawn = viewer.show(
     gray, key=f"arb_{case_id}", select_roi=True,
-    rois=[r for r in [(roi_a, f"A · {names.get(a_uid, a_uid)}", "red"), (roi_b, f"B · {names.get(b_uid, b_uid)}", "blue")] if r[0]],
+    rois=[r for r in [(roi_a, f"A · {names.get(a_uid, a_uid)}", "red"), (roi_b, f"B · {names.get(b_uid, b_uid)}", "#4da3ff")] if r[0]],
 )
 
 # --- 두 검토자의 결과 ---
@@ -95,14 +100,19 @@ with st.expander("참고 정보: ROI 밝기 통계와 경계 비율 (판정에�
     except ValueError as e:
         st.error(str(e))
     else:
-        def cell(side, key):
-            return info[side][key] if info[side] else "-"
+        def fmt(key, value):
+            # 경계 비율은 아주 작은 값이라(흉부 X-ray는 0.1% 안팎) %로 소수 셋째 자리까지 보여준다
+            return f"{value * 100:.3f}%" if key == "edge_ratio" else f"{value:.2f}"
 
+        def cell(side, key):
+            return fmt(key, info[side][key]) if info[side] else "-"
+
+        keys = ("mean", "std", "edge_ratio")
         table = {
             "항목": ["평균 밝기", "표준편차", "Canny 경계 비율"],
-            "A": [cell("a", "mean"), cell("a", "std"), cell("a", "edge_ratio")],
-            "B": [cell("b", "mean"), cell("b", "std"), cell("b", "edge_ratio")],
-            "차이 (B - A)": [info["diff"][k] for k in ("mean", "std", "edge_ratio")] if info["diff"] else ["-"] * 3,
+            "A": [cell("a", k) for k in keys],
+            "B": [cell("b", k) for k in keys],
+            "차이 (B - A)": [fmt(k, info["diff"][k]) for k in keys] if info["diff"] else ["-"] * 3,
         }
         st.dataframe(table, hide_index=True)
         if info["a"] and info["b"]:
@@ -135,5 +145,8 @@ with st.form(f"arbitrate_{case_id}"):
         except ERRORS as e:
             st.error(str(e))
         else:
-            st.toast("중재를 확정했습니다. 케이스가 완료로 바뀌었습니다.")
+            labels_done = {"a": "검토자 A의 ROI", "b": "검토자 B의 ROI", "custom": "새로 그린 ROI", "none": "ROI 없음"}
+            st.session_state["arbitration_done"] = (
+                f"{by_id[case_id]['mock_id']} 중재를 확정했습니다 ({labels_done.get(choice, choice)}). 케이스가 완료로 바뀌었습니다."
+            )
             st.rerun()

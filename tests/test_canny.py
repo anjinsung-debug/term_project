@@ -94,3 +94,10 @@ def test_has_version_for_processing_log():
 
 def test_shows_up_in_available_algorithms():
     assert algorithms.available()["canny"] is canny
+
+
+def test_edge_ratio_keeps_small_values():
+    """흉부 X-ray처럼 경계가 아주 적어도 0으로 뭉개지지 않는다 (11-24 실제 서버 시험에서 0으로 보였던 문제)."""
+    edges = np.zeros((1000, 1000), np.uint8)
+    edges[0, :20] = 255  # 100만 픽셀 중 20개 = 0.002%
+    assert canny.edge_ratio(edges) == 0.00002
